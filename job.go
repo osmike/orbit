@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -28,7 +27,6 @@ type Job struct {
 	State    State
 	ctx      context.Context
 	cancel   context.CancelFunc
-	mutex    sync.Mutex
 }
 
 type Retry struct {
