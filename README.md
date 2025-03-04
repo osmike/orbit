@@ -1,0 +1,2 @@
+# scheduler
+Go-Scheduler: High-Performance Task Scheduling for Go Go-Scheduler is a lightweight, high-performance scheduling library for executing tasks at predefined intervals or on demand. Designed with flexibility and monitoring in mind, it seamlessly integrates into modern Go applications, providing robust task execution and logging capabilities.
