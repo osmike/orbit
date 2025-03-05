@@ -120,3 +120,33 @@ func (s *Scheduler) runScheduler() {
 		}
 	}
 }
+
+func (s *Scheduler) executeJobs() {
+	for _, job := range s.Jobs {
+		select {
+		case err := <-errChan:
+			execTime := time.Since(startTime).Nanoseconds()
+			job.State.ExecutionTime.Store(execTime)
+
+			if err != nil {
+				job.setStatus(Error)
+			} else {
+				job.setStatus(Completed)
+			}
+
+			if job.Interval > 0 {
+				delay := job.Interval - time.Duration(execTime)
+				if delay < 0 {
+					delay = 0
+				}
+				select {
+				case <-time.After(delay):
+				case <-job.ctx.Done():
+					return
+				}
+				s.executeJob(job)
+			}
+			return
+		}
+	}
+}

@@ -18,17 +18,19 @@ const (
 )
 
 type Job struct {
-	ID       string
-	Name     string
-	Fn       func() error
-	Interval time.Duration
-	StartAt  time.Time
-	EndAt    time.Time
-	Retry    Retry
-	State    State
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
+	ID        string
+	Name      string
+	Fn        func() error
+	Interval  time.Duration
+	StartAt   time.Time
+	EndAt     time.Time
+	Retry     Retry
+	State     State
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	pauseChan chan struct{}
+	execChan  chan struct{}
 }
 
 type Retry struct {
@@ -52,6 +54,7 @@ func (j *Job) getStatus() JobStatus {
 		return Waiting
 	}
 	return val.(JobStatus)
+
 }
 
 func (j *Job) tryChangeStatus(allowed []JobStatus, newStatus JobStatus) bool {
