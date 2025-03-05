@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -27,6 +28,7 @@ type Job struct {
 	State    State
 	ctx      context.Context
 	cancel   context.CancelFunc
+	mu       sync.Mutex
 }
 
 type Retry struct {
@@ -36,8 +38,8 @@ type Retry struct {
 
 type State struct {
 	Status        atomic.Value
-	ExecutionTime time.Duration
-	Data          map[string]string
+	ExecutionTime atomic.Int64
+	Data          sync.Map
 }
 
 func (j *Job) setStatus(status JobStatus) {
@@ -47,8 +49,17 @@ func (j *Job) setStatus(status JobStatus) {
 func (j *Job) getStatus() JobStatus {
 	val := j.State.Status.Load()
 	if val == nil {
-		j.State.Status.Store(Waiting)
 		return Waiting
 	}
 	return val.(JobStatus)
+}
+
+func (j *Job) tryChangeStatus(allowed []JobStatus, newStatus JobStatus) bool {
+	current := j.getStatus()
+	for _, status := range allowed {
+		if current == status {
+			return j.State.Status.CompareAndSwap(current, newStatus)
+		}
+	}
+	return false
 }

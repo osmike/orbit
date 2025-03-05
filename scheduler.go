@@ -4,21 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
+	"time"
 )
 
 type Scheduler struct {
+	cfg     Config
 	log     *slog.Logger
 	Jobs    []*Job
 	jobChan chan *Job
 	ctx     context.Context
 	cancel  context.CancelFunc
-	mu      sync.Mutex
 }
 
-func New(log *slog.Logger, ctx context.Context) *Scheduler {
+type Config struct {
+	MaxWorkers  int
+	IdleTimeout time.Duration
+}
+
+func New(cfg Config, log *slog.Logger, ctx context.Context) *Scheduler {
 	ctx, cancel := context.WithCancel(ctx)
+	if cfg.MaxWorkers < 1 {
+		cfg.MaxWorkers = 100_000
+	}
 	s := &Scheduler{
+		cfg:     cfg,
 		log:     log,
 		Jobs:    make([]*Job, 0),
 		jobChan: make(chan *Job, 100),

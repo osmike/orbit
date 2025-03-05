@@ -7,8 +7,8 @@ import (
 )
 
 func (s *Scheduler) sanitizeJob(job *Job) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	job.mu.Lock()
+	defer job.mu.Unlock()
 
 	if job.ID == "" {
 		return fmt.Errorf("job ID is empty")
@@ -40,10 +40,10 @@ func (s *Scheduler) sanitizeJob(job *Job) error {
 }
 
 func (s *Scheduler) executeJob(job *Job) {
-	if job.getStatus() == Running {
+	if !job.tryChangeStatus([]JobStatus{Waiting, Stopped, Completed}, Running) {
 		return
 	}
-	job.setStatus(Running)
+	startTime := time.Now()
 	err := func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -57,6 +57,8 @@ func (s *Scheduler) executeJob(job *Job) {
 		return
 	}
 	job.setStatus(Completed)
+	execTime := time.Since(startTime).Nanoseconds()
+	job.State.ExecutionTime.Store(execTime)
 }
 
 func (s *Scheduler) processJob(job *Job) {
@@ -75,12 +77,13 @@ func (s *Scheduler) processJob(job *Job) {
 		case <-updateTicker.C:
 			switch job.getStatus() {
 			case Running:
-				job.State.ExecutionTime = time.Since(startTime)
+				job.State.ExecutionTime.Store(time.Since(startTime).Nanoseconds())
 			case Completed:
+				execTime := job.State.ExecutionTime.Load()
 				if job.Interval == 0 {
 					return
 				}
-				delay := job.Interval - job.State.ExecutionTime
+				delay := job.Interval - time.Duration(execTime)
 				if delay < 0 {
 					delay = 0
 				}
@@ -99,13 +102,21 @@ func (s *Scheduler) processJob(job *Job) {
 }
 
 func (s *Scheduler) runScheduler() {
+	sem := make(chan struct{}, s.cfg.MaxWorkers)
 	for {
 		select {
 		case <-s.ctx.Done():
 			s.log.Info("Scheduler shutting down")
 			return
-		case job := <-s.jobChan:
-			go s.processJob(job)
+		case job, ok := <-s.jobChan:
+			if !ok {
+				return
+			}
+			go func(j *Job) {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				s.processJob(j)
+			}(job)
 		}
 	}
 }
