@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,185 +10,134 @@ import (
 type JobStatus string
 
 const (
-	Waiting   JobStatus = "waiting"
-	Running   JobStatus = "running"
-	Stopped   JobStatus = "stopped"
-	Paused    JobStatus = "paused"
+	// Waiting indicates the job is scheduled and ready to run.
+	// The scheduler will pick up the job when the execution conditions are met.
+	// If the job has an interval, it will wait for the next scheduled run.
+	Waiting JobStatus = "waiting"
+
+	// Running indicates the job is currently executing.
+	// The scheduler actively processes the job and updates its execution time.
+	// If the job exceeds the timeout, it will be marked as an error and terminated.
+	Running JobStatus = "running"
+
+	// Stopped indicates the job execution has been manually stopped.
+	// The job will not run again unless explicitly restarted.
+	// This status is usually set when the job's execution window has expired.
+	Stopped JobStatus = "stopped"
+
+	// Paused indicates the job is temporarily paused and can be resumed later.
+	// While paused, the job retains its execution state but does not progress.
+	// The scheduler does not execute paused jobs until they are resumed.
+	Paused JobStatus = "paused"
+
+	// Completed indicates the job has finished execution successfully.
+	// If the job has an interval, it will be scheduled to run again after the delay.
+	// Otherwise, it remains in a completed state indefinitely.
 	Completed JobStatus = "completed"
-	Error     JobStatus = "error"
+
+	// Error indicates the job has encountered an error during execution.
+	// The job may retry execution if retries are enabled and attempts remain.
+	// If retries are exhausted, the job remains in the error state.
+	Error JobStatus = "error"
 )
 
-type Fn func(ctrl FnControl) error
-
-type FnControl struct {
-	Ctx        context.Context
-	PauseChan  chan struct{}
-	ResumeChan chan struct{}
-	data       *sync.Map
-}
-
-func (ctrl *FnControl) SaveUserInfo(data map[string]string) {
-	for key, val := range data {
-		ctrl.data.Store(key, val)
-	}
-}
-
+// Job represents a scheduled task that can be executed by the scheduler.
 type Job struct {
-	ID       string
-	Name     string
-	Fn       Fn
-	Interval time.Duration
-	Timeout  time.Duration
-	StartAt  time.Time
-	EndAt    time.Time
-	Retry    Retry
-	State    State
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	pauseCh  chan struct{}
+	// ID is a unique identifier for the job.
+	ID string
+
+	// Name is a human-readable name for the job.
+	// If not provided, it defaults to the job's ID.
+	Name string
+
+	// Fn is the function that will be executed when the job runs.
+	// It receives a FnControl instance, allowing the function to manage execution.
+	Fn Fn
+
+	// Interval defines the time duration between consecutive executions of the job.
+	// If set to 0, the job will run only once.
+	Schedule Schedule
+
+	// Timeout is the maximum allowed execution time for the job.
+	// If the job exceeds this duration, it will be forcibly stopped.
+	Timeout time.Duration
+
+	// StartAt is the earliest time at which the job is allowed to run.
+	// If the current time is before this value, the job will remain in the Waiting state.
+	StartAt time.Time
+
+	// EndAt is the latest time at which the job is allowed to run.
+	// If the current time is after this value, the job will be marked as Stopped.
+	EndAt time.Time
+
+	// Retry holds the retry settings for the job in case of execution failure.
+	Retry Retry
+
+	// State contains the runtime information of the job, such as execution time and status.
+	State State
+
+	// Ctx is the execution context of the job, allowing cancellation and timeout control.
+	ctx context.Context
+
+	// Cancel is the function used to cancel the job's execution.
+	cancel context.CancelFunc
+
+	// Mu is a mutex used to synchronize access to the job's state.
+	mu sync.Mutex
+
+	// pauseCh is a channel used to pause the execution of the job.
+	// When a signal is received, the job should enter the Paused state.
+	pauseCh chan struct{}
+
+	// resumeCh is a channel used to resume execution of a paused job.
+	// When a signal is received, the job should transition back to Running.
 	resumeCh chan struct{}
 }
 
+// Retry defines the retry policy for a job execution.
 type Retry struct {
-	Active         bool
-	Count          int64
+	// Active specifies whether retrying is enabled for the job.
+	Active bool
+
+	// Count is the number of allowed retry attempts before marking the job as failed.
+	// Each time a job fails, this counter decreases. When it reaches zero, the job stops retrying.
+	Count int64
+
+	// ResetOnSuccess determines whether the retry counter should be reset after a successful execution.
+	// If true, a successful execution resets the retry count to its initial value.
 	ResetOnSuccess bool
 }
 
+// State holds execution-related metadata for a job.
 type State struct {
-	JobID         string
-	StartAt       time.Time
-	EndAt         time.Time
-	Error         error
-	currentRetry  int64
-	Status        atomic.Value
+	// JobID is the unique identifier of the job, copied from Job.ID.
+	JobID string
+
+	// StartAt records the timestamp of the most recent execution start.
+	StartAt time.Time
+
+	// EndAt records the timestamp of the most recent execution completion.
+	EndAt time.Time
+
+	// Error holds the last error encountered during execution, if any.
+	Error error
+
+	// currentRetry tracks the number of retry attempts left.
+	currentRetry int64
+
+	// Status represents the current execution state of the job.
+	// It is updated atomically to prevent race conditions.
+	Status atomic.Value
+
+	// ExecutionTime stores the duration of the last execution in nanoseconds.
 	ExecutionTime int64
-	Data          sync.Map
+
+	// Data is a map that stores job-specific metadata or user-defined information.
+	// This allows jobs to persist and retrieve contextual information across executions.
+	Data sync.Map
 }
 
-func (j *Job) setStatus(status JobStatus) {
-	j.State.Status.Store(status)
+type Schedule struct {
+	Interval time.Duration
+	CronExpr string
 }
-
-func (j *Job) getStatus() JobStatus {
-	val := j.State.Status.Load()
-	if val == nil {
-		return Waiting
-	}
-	return val.(JobStatus)
-
-}
-
-func (j *Job) tryChangeStatus(allowed []JobStatus, newStatus JobStatus) bool {
-	current := j.getStatus()
-	for _, status := range allowed {
-		if current == status {
-			return j.State.Status.CompareAndSwap(current, newStatus)
-		}
-	}
-	return false
-}
-
-func (j *Job) exec(wg *sync.WaitGroup, sem chan struct{}) {
-	wg.Add(1)
-	defer wg.Done()
-	if !j.canExec() {
-		return
-	}
-	go func() {
-		sem <- struct{}{}
-		defer func() { <-sem }()
-		startTime := time.Now()
-
-		defer func() {
-			if r := recover(); r != nil {
-				j.setStatus(Error)
-				j.State.Error = fmt.Errorf("Job panicked: %v\n", r)
-				j.State.ExecutionTime = time.Since(startTime).Nanoseconds()
-			}
-		}()
-		ctrl := FnControl{
-			Ctx:        j.ctx,
-			PauseChan:  j.pauseCh,
-			ResumeChan: j.resumeCh,
-			data:       &j.State.Data,
-		}
-		j.State.StartAt = startTime
-		err := j.Fn(ctrl)
-		j.State.ExecutionTime = time.Since(startTime).Nanoseconds()
-
-		if err != nil {
-			j.setStatus(Error)
-			j.State.Error = err
-		} else {
-			j.setStatus(Completed)
-			if j.State.Error != nil {
-				if j.Retry.ResetOnSuccess {
-					j.State.currentRetry = j.Retry.Count
-				}
-				j.State.Error = nil
-			}
-		}
-	}()
-}
-
-func (j *Job) processRunning() {
-	j.State.ExecutionTime = time.Since(j.State.StartAt).Nanoseconds()
-	j.State.Error = nil
-	if time.Duration(j.State.ExecutionTime) > j.Timeout {
-		j.cancel()
-		j.setStatus(Error)
-		j.State.Error = fmt.Errorf("job timed out after %v", j.Timeout)
-		return
-	}
-}
-
-func (j *Job) processCompleted() {
-	j.State.EndAt = time.Now()
-	j.tryChangeStatus([]JobStatus{Completed}, Waiting)
-}
-
-func (j *Job) processError() {
-	j.State.EndAt = time.Now()
-	if j.Retry.Active && j.State.currentRetry > 0 {
-		j.setStatus(Waiting)
-		j.State.currentRetry--
-	}
-}
-
-func (j *Job) canExec() bool {
-	if j.Interval == 0 && !j.State.EndAt.IsZero() {
-		j.setStatus(Stopped)
-		return false
-	}
-	if !j.tryChangeStatus([]JobStatus{Waiting}, Running) {
-		return false
-	}
-	if time.Now().Before(j.StartAt) {
-		return false
-	}
-	if time.Now().After(j.EndAt) {
-		j.setStatus(Stopped)
-		return false
-	}
-	delay := j.getDelay()
-	if delay > 0 {
-		select {
-		case <-time.After(delay):
-		case <-j.ctx.Done():
-			return false
-		}
-	}
-	return true
-}
-
-func (j *Job) getDelay() time.Duration {
-	delay := j.Interval - time.Duration(j.State.ExecutionTime)
-	if delay < 0 {
-		delay = 0
-	}
-	return delay
-}
-
-func (j *Job) processStopped() {}
