@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ func (s *Scheduler) sanitizeJob(job *Job) error {
 	if ok {
 		return fmt.Errorf("job with ID %s already exists", job.ID)
 	}
+	job.State.JobID = job.ID
 	if job.Fn == nil {
 		return fmt.Errorf("job function is empty")
 	}
@@ -32,24 +34,27 @@ func (s *Scheduler) sanitizeJob(job *Job) error {
 	if job.EndAt.Before(job.StartAt) {
 		return fmt.Errorf("ending time cannot be before starting time")
 	}
+	if job.Timeout == 0 {
+		job.Timeout = s.cfg.IdleTimeout
+	}
 
 	job.ctx, job.cancel = context.WithCancel(s.ctx)
 	job.setStatus(Waiting)
+	job.pauseCh = make(chan struct{})
+	job.resumeCh = make(chan struct{})
 	return nil
 }
 
 func (s *Scheduler) runScheduler() {
-	go s.process()
-}
-
-func (s *Scheduler) process() {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(s.cfg.CheckInterval)
 	defer ticker.Stop()
 	sem := make(chan struct{}, s.cfg.MaxWorkers)
+	var wg sync.WaitGroup
 
 	for {
 		select {
 		case <-s.ctx.Done():
+			wg.Wait()
 			s.log.Info("Scheduler shutting down")
 			return
 		case <-ticker.C:
@@ -57,46 +62,15 @@ func (s *Scheduler) process() {
 				job := value.(*Job)
 				switch job.getStatus() {
 				case Waiting:
-					go func() {
-						sem <- struct{}{}
-						defer func() { <-sem }()
-
-						job.setStatus(Running)
-						startTime := time.Now()
-
-						defer func() {
-							if r := recover(); r != nil {
-								job.setStatus(Error)
-								fmt.Printf("Job panicked: %v\n", r)
-							}
-						}()
-
-						err := job.Fn()
-						job.State.ExecutionTime = time.Since(startTime).Nanoseconds()
-
-						if err != nil {
-							job.setStatus(Error)
-						} else {
-							job.setStatus(Completed)
-						}
-					}()
-
+					job.exec(&wg, sem)
 				case Running:
-					job.State.ExecutionTime = time.Since(job.StartAt).Nanoseconds()
-
+					job.processRunning()
 				case Completed:
-					delay := job.Interval - time.Duration(job.State.ExecutionTime)
-					if delay < 0 {
-						delay = 0
-					}
-					time.AfterFunc(delay, func() {
-						val, ok := s.jobs.Load(job.ID)
-						if ok {
-							job := val.(*Job)
-							job.tryChangeStatus([]JobStatus{Completed}, Waiting)
-						}
-					})
+					job.processCompleted()
+				case Error:
+					job.processError()
 				}
+
 				return true
 			})
 		}
