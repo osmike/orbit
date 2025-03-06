@@ -13,10 +13,9 @@ func (s *Scheduler) sanitizeJob(job *Job) error {
 	if job.ID == "" {
 		return fmt.Errorf("job ID is empty")
 	}
-	for _, _job := range s.Jobs {
-		if _job.ID == job.ID {
-			return fmt.Errorf("job %v already exists", job.ID)
-		}
+	_, ok := s.jobs.Load(job.ID)
+	if ok {
+		return fmt.Errorf("job with ID %s already exists", job.ID)
 	}
 	if job.Fn == nil {
 		return fmt.Errorf("job function is empty")
@@ -39,114 +38,67 @@ func (s *Scheduler) sanitizeJob(job *Job) error {
 	return nil
 }
 
-func (s *Scheduler) executeJob(job *Job) {
-	if !job.tryChangeStatus([]JobStatus{Waiting, Stopped, Completed}, Running) {
-		return
-	}
-	startTime := time.Now()
-	err := func() (err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("job panicked: %v", r)
-			}
-		}()
-		return job.Fn()
-	}()
-	if err != nil {
-		job.setStatus(Error)
-		return
-	}
-	job.setStatus(Completed)
-	execTime := time.Since(startTime).Nanoseconds()
-	job.State.ExecutionTime.Store(execTime)
-}
-
-func (s *Scheduler) processJob(job *Job) {
-	if job == nil {
-		return
-	}
-	go s.executeJob(job)
-	startTime := time.Now()
-	updateTicker := time.NewTicker(100 * time.Millisecond)
-	defer updateTicker.Stop()
-
-	for {
-		select {
-		case <-job.ctx.Done():
-			return
-		case <-updateTicker.C:
-			switch job.getStatus() {
-			case Running:
-				job.State.ExecutionTime.Store(time.Since(startTime).Nanoseconds())
-			case Completed:
-				execTime := job.State.ExecutionTime.Load()
-				if job.Interval == 0 {
-					return
-				}
-				delay := job.Interval - time.Duration(execTime)
-				if delay < 0 {
-					delay = 0
-				}
-				select {
-				case <-time.After(delay):
-				case <-job.ctx.Done():
-					return
-				}
-				startTime = time.Now()
-				go s.executeJob(job)
-			case Error:
-				// Заглушка для ретрая
-			}
-		}
-	}
-}
-
 func (s *Scheduler) runScheduler() {
+	go s.process()
+}
+
+func (s *Scheduler) process() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	sem := make(chan struct{}, s.cfg.MaxWorkers)
+
 	for {
 		select {
 		case <-s.ctx.Done():
 			s.log.Info("Scheduler shutting down")
 			return
-		case job, ok := <-s.jobChan:
-			if !ok {
-				return
-			}
-			go func(j *Job) {
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				s.processJob(j)
-			}(job)
-		}
-	}
-}
+		case <-ticker.C:
+			s.jobs.Range(func(key, value any) bool {
+				job := value.(*Job)
+				switch job.getStatus() {
+				case Waiting:
+					go func() {
+						sem <- struct{}{}
+						defer func() { <-sem }()
 
-func (s *Scheduler) executeJobs() {
-	for _, job := range s.Jobs {
-		select {
-		case err := <-errChan:
-			execTime := time.Since(startTime).Nanoseconds()
-			job.State.ExecutionTime.Store(execTime)
+						job.setStatus(Running)
+						startTime := time.Now()
 
-			if err != nil {
-				job.setStatus(Error)
-			} else {
-				job.setStatus(Completed)
-			}
+						defer func() {
+							if r := recover(); r != nil {
+								job.setStatus(Error)
+								fmt.Printf("Job panicked: %v\n", r)
+							}
+						}()
 
-			if job.Interval > 0 {
-				delay := job.Interval - time.Duration(execTime)
-				if delay < 0 {
-					delay = 0
+						err := job.Fn()
+						job.State.ExecutionTime = time.Since(startTime).Nanoseconds()
+
+						if err != nil {
+							job.setStatus(Error)
+						} else {
+							job.setStatus(Completed)
+						}
+					}()
+
+				case Running:
+					job.State.ExecutionTime = time.Since(job.StartAt).Nanoseconds()
+
+				case Completed:
+					delay := job.Interval - time.Duration(job.State.ExecutionTime)
+					if delay < 0 {
+						delay = 0
+					}
+					time.AfterFunc(delay, func() {
+						val, ok := s.jobs.Load(job.ID)
+						if ok {
+							job := val.(*Job)
+							job.tryChangeStatus([]JobStatus{Completed}, Waiting)
+						}
+					})
 				}
-				select {
-				case <-time.After(delay):
-				case <-job.ctx.Done():
-					return
-				}
-				s.executeJob(job)
-			}
-			return
+				return true
+			})
 		}
 	}
 }

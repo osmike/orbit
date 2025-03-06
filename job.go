@@ -18,19 +18,17 @@ const (
 )
 
 type Job struct {
-	ID        string
-	Name      string
-	Fn        func() error
-	Interval  time.Duration
-	StartAt   time.Time
-	EndAt     time.Time
-	Retry     Retry
-	State     State
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.Mutex
-	pauseChan chan struct{}
-	execChan  chan struct{}
+	ID       string
+	Name     string
+	Fn       func() error
+	Interval time.Duration
+	StartAt  time.Time
+	EndAt    time.Time
+	Retry    Retry
+	State    State
+	ctx      context.Context
+	cancel   context.CancelFunc
+	mu       sync.Mutex
 }
 
 type Retry struct {
@@ -40,7 +38,7 @@ type Retry struct {
 
 type State struct {
 	Status        atomic.Value
-	ExecutionTime atomic.Int64
+	ExecutionTime int64
 	Data          sync.Map
 }
 
