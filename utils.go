@@ -70,3 +70,11 @@ func (j *Job) getDelay() time.Duration {
 	}
 	return delay
 }
+
+func (s *Scheduler) getJobByID(id string) (*Job, error) {
+	jobInterface, exists := s.jobs.Load(id)
+	if exists {
+		return jobInterface.(*Job), nil
+	}
+	return nil, newErr(ErrJobNotFound, id)
+}

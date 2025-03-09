@@ -28,6 +28,12 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 		return
 	}
 
+	select {
+	case <-j.ctx.Done():
+		return
+	default:
+	}
+
 	// Execute the job asynchronously in a separate goroutine.
 	go func() {
 		// Acquire a semaphore slot to enforce max worker constraints.
@@ -55,6 +61,12 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 		}
 
 		// Execute the job function and track execution duration.
+		if j.Hooks.OnStart != nil {
+			if err := j.Hooks.OnStart(ctrl); err != nil {
+				j.setStatus(Error)
+				j.State.Error = err
+			}
+		}
 		err := j.Fn(ctrl)
 		j.State.ExecutionTime = time.Since(startTime).Nanoseconds()
 
@@ -62,6 +74,9 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 		if err != nil {
 			j.setStatus(Error)
 			j.State.Error = err
+			if j.Hooks.OnError != nil {
+				j.Hooks.OnError(ctrl, err)
+			}
 		} else {
 			j.setStatus(Completed)
 
@@ -71,6 +86,13 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 					j.State.currentRetry = j.Retry.Count
 				}
 				j.State.Error = nil
+			}
+
+			if j.Hooks.OnSuccess != nil {
+				if err := j.Hooks.OnSuccess(ctrl); err != nil {
+					j.setStatus(Error)
+					j.State.Error = err
+				}
 			}
 		}
 	}()

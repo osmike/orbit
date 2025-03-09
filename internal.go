@@ -105,6 +105,8 @@ func (s *Scheduler) runScheduler() {
 					job.processCompleted() // Handle post-execution logic
 				case Error:
 					job.processError() // Handle retries or logging of failed jobs
+				case Stopped:
+					job.processStop()
 				}
 				return true
 			})

@@ -76,6 +76,8 @@ type Job struct {
 	// State contains the runtime information of the job, such as execution time and status.
 	State State
 
+	Hooks Hooks
+
 	// Ctx is the execution context of the job, allowing cancellation and timeout control.
 	ctx context.Context
 

@@ -61,3 +61,8 @@ func (j *Job) processError() {
 		j.State.currentRetry--
 	}
 }
+
+func (j *Job) processStop() {
+	j.State.EndAt = time.Now()
+	j.cancel()
+}

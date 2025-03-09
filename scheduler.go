@@ -87,3 +87,36 @@ func (s *Scheduler) Add(jobs ...*Job) error {
 	}
 	return nil
 }
+
+func (s *Scheduler) Stop(id string) error {
+	job, err := s.getJobByID(id)
+	if err != nil {
+		return err
+	}
+	job.cancel()
+	job.setStatus(Stopped)
+	return nil
+}
+
+func (s *Scheduler) Pause(id string) error {
+	job, err := s.getJobByID(id)
+	if err != nil {
+		return err
+	}
+	select {
+	case job.pauseCh <- struct{}{}:
+		job.setStatus(Paused)
+	default:
+		fmt.Println("Job", id, "already paused or not listening")
+	}
+	return nil
+}
+
+func (s *Scheduler) Resume(id string) error {
+	job, err := s.getJobByID(id)
+	if err != nil {
+		return err
+	}
+	job.resumeCh <- struct{}{}
+	return nil
+}
