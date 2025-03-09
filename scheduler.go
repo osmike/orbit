@@ -81,7 +81,7 @@ func New(cfg Config, log *slog.Logger, ctx context.Context) *Scheduler {
 func (s *Scheduler) Add(jobs ...*Job) error {
 	for _, job := range jobs {
 		if err := s.sanitizeJob(job); err != nil {
-			return fmt.Errorf("error adding job - %v, %w, err: %v", job, ErrAddingJob, err)
+			return newErr(ErrAddingJob, fmt.Sprintf("error: %v, id: %s", err, job.ID))
 		}
 		s.jobs.Store(job.ID, job)
 	}

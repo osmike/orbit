@@ -98,7 +98,7 @@ func parseField(field string, min int, max int) ([]int, error) {
 func ParseCron(cronExpr string) (*CronSchedule, error) {
 	parts := strings.Fields(cronExpr)
 	if len(parts) != 5 {
-		return nil, fmt.Errorf("invalid cron expression: %s", cronExpr)
+		return nil, getErr(ErrInvalidCronExpression, cronExpr)
 	}
 
 	minutes, err := parseField(parts[0], 0, 59)

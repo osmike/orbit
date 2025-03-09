@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -24,7 +23,7 @@ func (j *Job) processRunning() {
 	if time.Duration(j.State.ExecutionTime) > j.Timeout {
 		j.cancel() // Stop job execution.
 		j.setStatus(Error)
-		j.State.Error = fmt.Errorf("job timed out after %v", j.Timeout)
+		j.State.Error = newErr(ErrJobTimout, j.ID)
 		return
 	}
 }

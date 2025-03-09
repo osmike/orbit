@@ -50,12 +50,21 @@ func (j *Job) tryChangeStatus(allowed []JobStatus, newStatus JobStatus) bool {
 
 // getDelay calculates the remaining time before the next execution of the job.
 //
+// It prioritizes cron-based scheduling if a valid cron schedule is set.
+// If no cron schedule is provided, it falls back to the fixed interval execution.
+//
 // If the execution time of the previous run exceeded the interval, it returns 0 to avoid negative delays.
 //
 // Returns:
 // - The duration to wait before the next execution.
 func (j *Job) getDelay() time.Duration {
-	delay := j.Interval - time.Duration(j.State.ExecutionTime)
+	// If the job is using a cron schedule, calculate the next execution time
+	if j.cron != nil {
+		return j.cron.NextRun()
+	}
+
+	// Default to interval-based execution
+	delay := j.Schedule.Interval - time.Duration(j.State.ExecutionTime)
 	if delay < 0 {
 		delay = 0
 	}

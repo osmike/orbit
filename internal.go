@@ -23,18 +23,30 @@ func (s *Scheduler) sanitizeJob(job *Job) error {
 	defer job.mu.Unlock()
 
 	if job.ID == "" {
-		return fmt.Errorf("job ID is empty")
+		return newErr(ErrEmptyID, fmt.Sprintf("job name - %s", job.Name))
 	}
 	_, ok := s.jobs.Load(job.ID)
 	if ok {
-		return fmt.Errorf("job with ID %s already exists", job.ID)
+		return newErr(ErrIDExists, job.ID)
 	}
 	job.State.JobID = job.ID
 	if job.Fn == nil {
-		return fmt.Errorf("job function is empty")
+		return newErr(ErrEmptyFunction, job.ID)
 	}
 	if job.Name == "" {
 		job.Name = job.ID
+	}
+	if job.Schedule.CronExpr != "" && job.Schedule.Interval > 0 {
+		return newErr(ErrMixedScheduleType, job.ID)
+	}
+	if job.Schedule.CronExpr != "" {
+		var err error
+		job.cron, err = ParseCron(job.Schedule.CronExpr)
+		if err != nil {
+			return newErr(ErrInvalidCronExpression, fmt.Sprintf("error - %v, id: %s", err, job.ID))
+		}
+	} else {
+		job.cron = nil
 	}
 	if job.StartAt.IsZero() {
 		job.StartAt = time.Now()
@@ -43,7 +55,7 @@ func (s *Scheduler) sanitizeJob(job *Job) error {
 		job.EndAt = MAX_END_AT // Predefined constant for the maximum job execution period
 	}
 	if job.EndAt.Before(job.StartAt) {
-		return fmt.Errorf("ending time cannot be before starting time")
+		return newErr(ErrWrongTime, fmt.Sprintf("ending time cannot be before starting time, id: %s", job.ID))
 	}
 	if job.Timeout == 0 {
 		job.Timeout = s.cfg.IdleTimeout

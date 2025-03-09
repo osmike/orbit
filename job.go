@@ -36,7 +36,7 @@ const (
 	Completed JobStatus = "completed"
 
 	// Error indicates the job has encountered an error during execution.
-	// The job may retry execution if retries are enabled and attempts remain.
+	// The job may retry execution if retries are enabled and attempts to remain.
 	// If retries are exhausted, the job remains in the error state.
 	Error JobStatus = "error"
 )
@@ -92,6 +92,8 @@ type Job struct {
 	// resumeCh is a channel used to resume execution of a paused job.
 	// When a signal is received, the job should transition back to Running.
 	resumeCh chan struct{}
+
+	cron *CronSchedule
 }
 
 // Retry defines the retry policy for a job execution.

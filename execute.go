@@ -41,7 +41,7 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 		defer func() {
 			if r := recover(); r != nil {
 				j.setStatus(Error)
-				j.State.Error = fmt.Errorf("job panicked: %v", r)
+				j.State.Error = newErr(ErrJobPanicked, fmt.Sprintf("%v, id: %s", r, j.ID))
 				j.State.ExecutionTime = time.Since(startTime).Nanoseconds()
 			}
 		}()
@@ -90,7 +90,8 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 //   - false if any conditions prevent execution.
 func (j *Job) canExecute() bool {
 	// Prevent one-time jobs from running again after completion.
-	if j.Interval == 0 && !j.State.EndAt.IsZero() {
+	delay := j.getDelay()
+	if delay > 0 && !j.State.EndAt.IsZero() {
 		j.setStatus(Stopped)
 		return false
 	}
@@ -112,7 +113,6 @@ func (j *Job) canExecute() bool {
 	}
 
 	// Calculate execution delay and apply it if necessary.
-	delay := j.getDelay()
 	if delay > 0 {
 		select {
 		case <-time.After(delay): // Wait for the specified delay before running.
