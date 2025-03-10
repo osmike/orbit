@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Scheduler struct {
 	jobs   sync.Map           // Concurrent-safe storage for scheduled jobs.
 	ctx    context.Context    // Root context for managing scheduler lifecycle.
 	cancel context.CancelFunc // Function to cancel the scheduler, stopping all jobs.
+	mon    Monitor            // Monitoring interface for tracking job execution.
 }
 
 // Config defines the configuration parameters of the Scheduler, determining job
@@ -25,6 +27,13 @@ type Config struct {
 	MaxWorkers    int           // Maximum number of jobs that can execute concurrently.
 	IdleTimeout   time.Duration // Default timeout for jobs if not explicitly defined.
 	CheckInterval time.Duration // Frequency at which the scheduler checks job statuses.
+}
+
+type Monitor interface {
+	AddJob(job *JobMetadata)
+	GetJobByID(id string) *JobMetadata
+	GetJobs() []*JobMetadata
+	UpdateState(id string, state *State)
 }
 
 // New initializes and starts a new Scheduler instance with the given configuration.
@@ -39,7 +48,7 @@ type Config struct {
 //
 // Returns:
 // - A pointer to the initialized Scheduler instance.
-func New(cfg Config, log *slog.Logger, ctx context.Context) *Scheduler {
+func New(cfg Config, log *slog.Logger, mon Monitor, ctx context.Context) *Scheduler {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Apply default values if necessary.
@@ -53,10 +62,15 @@ func New(cfg Config, log *slog.Logger, ctx context.Context) *Scheduler {
 		cfg.IdleTimeout = DEFAULT_IDLE_TIMEOUT
 	}
 
+	if mon == nil {
+		mon = NewDefaultMonitor()
+	}
+
 	// Create and initialize the scheduler.
 	s := &Scheduler{
 		cfg:    cfg,
 		log:    log,
+		mon:    mon,
 		jobs:   sync.Map{},
 		ctx:    ctx,
 		cancel: cancel,
@@ -84,6 +98,24 @@ func (s *Scheduler) Add(jobs ...*Job) error {
 			return newErr(ErrAddingJob, fmt.Sprintf("error: %v, id: %s", err, job.ID))
 		}
 		s.jobs.Store(job.ID, job)
+		s.mon.AddJob(&JobMetadata{
+			ID:      job.ID,
+			Name:    job.Name,
+			StartAt: job.StartAt,
+			EndAt:   job.EndAt,
+			State: State{
+				Status: func() atomic.Value {
+					var v atomic.Value
+					v.Store(Waiting)
+					return v
+				}(),
+				StartAt:       job.State.StartAt,
+				EndAt:         job.State.EndAt,
+				Error:         job.State.Error,
+				ExecutionTime: job.State.ExecutionTime,
+				Data:          sync.Map{},
+			},
+		})
 	}
 	return nil
 }
@@ -94,7 +126,6 @@ func (s *Scheduler) Stop(id string) error {
 		return err
 	}
 	job.cancel()
-	job.setStatus(Stopped)
 	return nil
 }
 
@@ -105,9 +136,11 @@ func (s *Scheduler) Pause(id string) error {
 	}
 	select {
 	case job.pauseCh <- struct{}{}:
-		job.setStatus(Paused)
+		if !job.tryChangeStatus([]JobStatus{Running}, Paused) {
+			return fmt.Errorf("job %s is not running", id)
+		}
 	default:
-		fmt.Println("Job", id, "already paused or not listening")
+		return fmt.Errorf("job %s is already paused or PauseChan is not being read", id)
 	}
 	return nil
 }
@@ -117,6 +150,24 @@ func (s *Scheduler) Resume(id string) error {
 	if err != nil {
 		return err
 	}
-	job.resumeCh <- struct{}{}
+	select {
+	case job.resumeCh <- struct{}{}:
+		if !job.tryChangeStatus([]JobStatus{Paused}, Running) {
+			return fmt.Errorf("job %s is not paused", id)
+		}
+	default:
+		return fmt.Errorf("job %s is not paused or ResumeChan is not being read", id)
+	}
+	return nil
+}
+
+func (s *Scheduler) Delete(id string) error {
+	job, err := s.getJobByID(id)
+	if err != nil {
+		return err
+	}
+	job.cancel()
+	job.setStatus(Stopped)
+	s.jobs.Delete(id)
 	return nil
 }

@@ -1,38 +1,46 @@
 package scheduler
 
-import "time"
+import (
+	"sync"
+)
 
-type Monitor interface {
-	SaveMetrics(data JobMetrics) error
-	GetMetrics() JobMetrics
+type DefaultMonitor struct {
+	Data sync.Map
 }
 
-type MonitorSettings struct {
-	CustomMetrics    map[string]string
-	MonitorTime      bool
-	MonitorError     bool
-	MonitorJobStatus bool
+func NewDefaultMonitor() *DefaultMonitor {
+	return &DefaultMonitor{}
 }
 
-type MonitorConfig struct {
-	Settings MonitorSettings
-	Monitor  Monitor
+func (m *DefaultMonitor) AddJob(job *JobMetadata) {
+	m.Data.Store(job.ID, job)
 }
 
-type JobMetrics struct {
-	ExecutionTime time.Duration
-	ErrorCount    int
-	Status        string
-}
-
-type MonitorClient struct {
-	Cfg MonitorConfig
-}
-
-func NewMonitorClient(cfg MonitorConfig) *MonitorClient {
-	return &MonitorClient{Cfg: cfg}
-}
-
-func (m *MonitorClient) start(MonitorSettings) error {
+func (m *DefaultMonitor) GetJobByID(id string) *JobMetadata {
+	if job, ok := m.Data.Load(id); ok {
+		return job.(*JobMetadata)
+	}
 	return nil
+}
+
+func (m *DefaultMonitor) GetJobs() []*JobMetadata {
+	var jobs []*JobMetadata
+	m.Data.Range(func(_, value interface{}) bool {
+		jobs = append(jobs, value.(*JobMetadata))
+		return true
+	})
+	return jobs
+}
+
+func (m *DefaultMonitor) UpdateState(id string, state *State) {
+	if job, ok := m.Data.Load(id); ok {
+		state.Data.Range(func(key, value interface{}) bool {
+			job.(*JobMetadata).State.Data.Store(key, value)
+			return true
+		})
+		job.(*JobMetadata).State.EndAt = state.EndAt
+		job.(*JobMetadata).State.Error = state.Error
+		job.(*JobMetadata).State.ExecutionTime = state.ExecutionTime
+		job.(*JobMetadata).State.Status.Store(state.Status.Load())
+	}
 }

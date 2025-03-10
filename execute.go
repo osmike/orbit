@@ -30,6 +30,7 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 
 	select {
 	case <-j.ctx.Done():
+		j.setStatus(Stopped)
 		return
 	default:
 	}
@@ -138,6 +139,7 @@ func (j *Job) canExecute() bool {
 	if delay > 0 {
 		select {
 		case <-time.After(delay): // Wait for the specified delay before running.
+			return true
 		case <-j.ctx.Done(): // Abort if the job is canceled during the wait.
 			return false
 		}

@@ -145,3 +145,11 @@ type Schedule struct {
 	Interval time.Duration
 	CronExpr string
 }
+
+type JobMetadata struct {
+	ID      string
+	Name    string
+	StartAt time.Time
+	EndAt   time.Time
+	State   State
+}
