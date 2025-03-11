@@ -2,7 +2,7 @@ package job
 
 import (
 	"fmt"
-	errs "go-scheduler/error"
+	errs "go-scheduler/internal/error"
 	"strconv"
 	"strings"
 	"time"
