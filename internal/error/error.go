@@ -20,8 +20,11 @@ var (
 )
 
 var (
-	ErrJobPanicked = errors.New("job panicked")
-	ErrJobTimout   = errors.New("job timed out")
+	ErrJobPanicked        = errors.New("job panicked")
+	ErrJobTimout          = errors.New("job timed out")
+	ErrJobExecution       = errors.New("job exec before start time")
+	ErrJobExecWrongStatus = errors.New("job execution with wrong status")
+	ErrJobExecWrongTime   = errors.New("job execution with wrong time")
 )
 
 func New(err error, str string) error {

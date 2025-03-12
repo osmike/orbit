@@ -159,29 +159,29 @@ func (j *Job) UpdateState(state domain.StateDTO) {
 	j.state.Update(state, false)
 }
 
-// GetDelay calculates the remaining time before the next execution of the job.
+// NextRun calculates the exact next scheduled execution time of the job.
 //
-// It prioritizes cron-based scheduling if a valid cron schedule is set.
-// If no cron schedule is provided, it falls back to the fixed interval execution.
-//
-// If the execution time of the previous run exceeded the interval, it returns 0 to avoid negative delays.
+// It supports two scheduling modes:
+// - Cron-based scheduling (if CronExpr is set).
+// - Interval-based scheduling (relative to last start).
 //
 // Returns:
-// - The duration to wait before the next execution.
-func (j *Job) GetDelay() time.Duration {
+// - The next scheduled run time as time.Time.
+func (j *Job) NextRun() time.Time {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	// If the job is using a cron schedule, calculate the next execution time
+
+	// Cron-based schedule
 	if j.cron != nil {
 		return j.cron.NextRun()
 	}
 
-	// Default to interval-based execution
-	delay := j.Schedule.Interval - time.Duration(j.state.ExecutionTime)
-	if delay < 0 {
-		delay = 0
+	// Interval-based schedule
+	next := j.state.StartAt.Add(j.Schedule.Interval)
+	if next.Before(time.Now()) {
+		return time.Now()
 	}
-	return delay
+	return next
 }
 
 // CanExecute determines if the job is eligible for execution based on its configuration and timing constraints.
@@ -196,10 +196,9 @@ func (j *Job) GetDelay() time.Duration {
 // Returns:
 //   - true if the job can proceed with execution.
 //   - false if any conditions prevent execution.
-func (j *Job) CanExecute() bool {
+func (j *Job) CanExecute() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	delay := j.GetDelay()
 	// Ensure the job is not already running or blocked from execution.
 	if j.GetStatus() != domain.Waiting {
 		return false
@@ -215,17 +214,25 @@ func (j *Job) CanExecute() bool {
 		return false
 	}
 
-	// Calculate execution delay and apply it if necessary.
-	if delay > 0 {
-		select {
-		case <-time.After(delay): // Wait for the specified delay before running.
-			return true
-		case <-j.ctx.Done(): // Abort if the job is canceled during the wait.
-			return false
-		default:
-			return false
-		}
-	}
-
 	return true
+}
+
+func (j *Job) ProcessJobStart(start time.Time) {
+	j.UpdateState(domain.StateDTO{
+		StartAt:       start,
+		EndAt:         time.Time{},
+		Status:        domain.Running,
+		ExecutionTime: 0,
+		Data:          map[string]interface{}{},
+	})
+}
+
+func (j *Job) ProcessJobEnd(start time.Time, status domain.JobStatus, err error) {
+	execTime := time.Since(start).Nanoseconds()
+	j.UpdateState(domain.StateDTO{
+		StartAt:       start,
+		EndAt:         time.Now(),
+		Status:        status,
+		ExecutionTime: execTime,
+	})
 }

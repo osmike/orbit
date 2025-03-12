@@ -132,16 +132,18 @@ func ParseCron(cronExpr string) (*CronSchedule, error) {
 	}, nil
 }
 
-// NextRun calculates the duration until the next execution time based on the cron schedule.
+// NextRun calculates the next execution time based on the cron schedule.
 //
-// It calculates the duration until the next valid cron schedule execution time.
+// It searches into the future (up to one year) by efficiently skipping
+// unnecessary checks for unmatched cron conditions.
 //
 // Returns:
-// - The duration until the next valid run time.
-func (cs *CronSchedule) NextRun() time.Duration {
+// - The next valid scheduled execution time as time.Time.
+// - If no valid execution time is found (highly unlikely), returns zero time.
+func (cs *CronSchedule) NextRun() time.Time {
 	now := time.Now().Truncate(time.Minute).Add(time.Minute)
 
-	for i := 0; i < 365*24*60; i++ {
+	for i := 0; i < 365*24*60; i++ { // safety limit: 1 year
 		if !contains(cs.Months, int(now.Month())) {
 			now = now.AddDate(0, 1, -now.Day()+1).Truncate(24 * time.Hour)
 			continue
@@ -151,7 +153,7 @@ func (cs *CronSchedule) NextRun() time.Duration {
 			continue
 		}
 		if !contains(cs.Hours, now.Hour()) {
-			now = now.Add(time.Duration(60-now.Minute()) * time.Minute).Truncate(time.Hour)
+			now = now.Add(time.Hour - time.Duration(now.Minute())*time.Minute).Truncate(time.Hour)
 			continue
 		}
 		if !contains(cs.Minutes, now.Minute()) {
@@ -163,11 +165,11 @@ func (cs *CronSchedule) NextRun() time.Duration {
 			continue
 		}
 
-		return time.Until(now)
+		return now
 	}
 
-	// If no valid time found (should not happen in practice)
-	return -1
+	// Should never happen, just a safeguard
+	return time.Time{}
 }
 
 // matches checks if a given time matches the parsed cron schedule.

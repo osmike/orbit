@@ -2,7 +2,6 @@ package job
 
 import (
 	"context"
-	"sync"
 )
 
 // Fn defines the function signature that every job must implement.
@@ -27,13 +26,13 @@ type FnControl struct {
 
 	// data is a map that stores job-specific metadata.
 	// This allows the job to persist and retrieve contextual information dynamically during execution.
-	data *sync.Map
+	data *map[string]interface{}
 }
 
 // SaveUserInfo allows a running job to store custom key-value metadata.
 // This can be used for logging, debugging, or sharing execution state across multiple runs of the same job.
-func (ctrl *FnControl) SaveUserInfo(data map[string]string) {
-	for key, val := range data {
-		ctrl.data.Store(key, val)
+func (ctrl *FnControl) SaveUserInfo(data map[string]interface{}) {
+	for k, v := range data {
+		(*ctrl.data)[k] = v
 	}
 }

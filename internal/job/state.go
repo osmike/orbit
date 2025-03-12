@@ -1,14 +1,16 @@
 package job
 
 import (
-	domain2 "go-scheduler/internal/domain"
+	"fmt"
+	"go-scheduler/internal/domain"
+	errs "go-scheduler/internal/error"
 	"sync"
 )
 
 // State represents the execution state of a job.
 // It tracks execution metadata, including start and end timestamps, status, error details, and execution time.
 type state struct {
-	domain2.StateDTO
+	domain.StateDTO
 	mu sync.Mutex // Protects all fields of State from race conditions.
 	// currentRetry keeps track of the remaining retry attempts.
 	currentRetry int64
@@ -16,23 +18,23 @@ type state struct {
 
 func (s *state) Init(id string) *state {
 	return &state{
-		StateDTO: domain2.StateDTO{
+		StateDTO: domain.StateDTO{
 			JobID:  id,
-			Status: domain2.Waiting,
+			Status: domain.Waiting,
 			Data:   make(map[string]interface{}),
 		},
 	}
 }
 
 // SetStatus safely updates the job's execution status.
-func (s *state) SetStatus(status domain2.JobStatus) {
+func (s *state) SetStatus(status domain.JobStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Status = status
 }
 
 // GetStatus safely retrieves the current job execution status.
-func (s *state) GetStatus() domain2.JobStatus {
+func (s *state) GetStatus() domain.JobStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.Status
@@ -40,7 +42,7 @@ func (s *state) GetStatus() domain2.JobStatus {
 
 // TrySetStatus attempts to update the job status only if it is in the allowed state.
 // It returns true if the status was successfully updated, otherwise false.
-func (s *state) TrySetStatus(allowed []domain2.JobStatus, status domain2.JobStatus) bool {
+func (s *state) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	currentStatus := s.Status
@@ -63,7 +65,7 @@ func (s *state) SetExecutionTime(executionTime int64) {
 // Update modifies the job state based on a given StateDTO.
 // If strict mode is enabled, all fields are overwritten.
 // Otherwise, only non-zero values from the DTO are applied.
-func (s *state) Update(state domain2.StateDTO, strict bool) {
+func (s *state) Update(state domain.StateDTO, strict bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -91,10 +93,10 @@ func (s *state) Update(state domain2.StateDTO, strict bool) {
 
 // GetState returns a snapshot of the current job execution state as a StateDTO.
 // This method ensures thread safety by acquiring a lock before copying fields.
-func (s *state) GetState() domain2.StateDTO {
+func (s *state) GetState() domain.StateDTO {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return domain2.StateDTO{
+	return domain.StateDTO{
 		JobID:         s.JobID,
 		StartAt:       s.StartAt,
 		EndAt:         s.EndAt,
@@ -103,4 +105,18 @@ func (s *state) GetState() domain2.StateDTO {
 		ExecutionTime: s.ExecutionTime,
 		Data:          s.Data,
 	}
+}
+
+func (s *state) SetEndState(resOnSuccess bool, execTime int64, status domain.JobStatus, err error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.TrySetStatus([]domain.JobStatus{domain.Running, domain.Waiting}, status) {
+		return errs.New(errs.ErrJobExecWrongStatus, fmt.Sprintf("wrong status transition from %s to %s", s.Status, status))
+	}
+	if s.Error != nil && resOnSuccess {
+		s.currentRetry = 0
+	}
+	s.Status = domain.Completed
+	s.ExecutionTime = execTime
+	s.Error = nil
 }
