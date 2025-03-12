@@ -7,4 +7,5 @@ type Hooks struct {
 	OnSuccess func(ctrl FnControl) error
 	OnPause   func(ctrl FnControl) error
 	OnResume  func(ctrl FnControl) error
+	Finally   func(ctrl FnControl) error
 }

@@ -34,6 +34,11 @@ const (
 	// The job may retry execution if retries are enabled and attempts to remain.
 	// If retries are exhausted, the job remains in the error state.
 	Error JobStatus = "error"
+
+	// Ended indicates the job has finished execution.
+	// This status is usually set when the job's execution window has expired.
+	// The job will not run again unless explicitly restarted.
+	Ended JobStatus = "ended"
 )
 
 const (

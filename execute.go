@@ -24,7 +24,7 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 	defer wg.Done()
 
 	// Ensure the job is eligible for execution before proceeding.
-	if !j.canExecute() {
+	if err := j.canExecute(); err != nil {
 		return
 	}
 
@@ -111,39 +111,39 @@ func (j *Job) execute(wg *sync.WaitGroup, sem chan struct{}) {
 // Returns:
 //   - true if the job can proceed with execution.
 //   - false if any conditions prevent execution.
-func (j *Job) canExecute() bool {
+func (j *Job) canExecute() error {
 	// Prevent one-time jobs from running again after completion.
 	delay := j.getDelay()
 	if delay > 0 && !j.State.EndAt.IsZero() {
 		j.setStatus(Stopped)
-		return false
+		return fmt.Errorf("job has expired")
 	}
 
 	// Ensure the job is not already running or blocked from execution.
 	if !j.tryChangeStatus([]JobStatus{Waiting}, Running) {
-		return false
+		return fmt.Errorf("job is already running")
 	}
 
 	// Prevent execution before the scheduled start time.
 	if time.Now().Before(j.StartAt) {
-		return false
+		return fmt.Errorf("job is not scheduled to run yet")
 	}
 
 	// Stop execution if the job's allowed execution window has expired.
 	if time.Now().After(j.EndAt) {
 		j.setStatus(Stopped)
-		return false
+		return fmt.Errorf("job has expired")
 	}
 
 	// Calculate execution delay and apply it if necessary.
 	if delay > 0 {
 		select {
 		case <-time.After(delay): // Wait for the specified delay before running.
-			return true
+			return nil
 		case <-j.ctx.Done(): // Abort if the job is canceled during the wait.
-			return false
+			return fmt.Errorf("job canceled")
 		}
 	}
 
-	return true
+	return nil
 }

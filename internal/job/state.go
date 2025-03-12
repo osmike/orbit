@@ -5,6 +5,7 @@ import (
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
 	"sync"
+	"time"
 )
 
 // State represents the execution state of a job.
@@ -107,16 +108,18 @@ func (s *state) GetState() domain.StateDTO {
 	}
 }
 
-func (s *state) SetEndState(resOnSuccess bool, execTime int64, status domain.JobStatus, err error) error {
+func (s *state) SetEndState(resOnSuccess bool, start time.Time, status domain.JobStatus, err error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.TrySetStatus([]domain.JobStatus{domain.Running, domain.Waiting}, status) {
 		return errs.New(errs.ErrJobExecWrongStatus, fmt.Sprintf("wrong status transition from %s to %s", s.Status, status))
 	}
-	if s.Error != nil && resOnSuccess {
+	if s.Error != nil && resOnSuccess && err == nil {
 		s.currentRetry = 0
 	}
 	s.Status = domain.Completed
-	s.ExecutionTime = execTime
-	s.Error = nil
+	s.ExecutionTime = time.Since(start).Nanoseconds()
+	s.Error = err
+	s.EndAt = time.Now()
+	return nil
 }

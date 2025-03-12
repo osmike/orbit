@@ -16,6 +16,10 @@ var (
 )
 
 var (
+	ErrTooManyJobs = errors.New("too many jobs")
+)
+
+var (
 	ErrInvalidCronExpression = errors.New("invalid cron expression")
 )
 
@@ -24,7 +28,8 @@ var (
 	ErrJobTimout          = errors.New("job timed out")
 	ErrJobExecution       = errors.New("job exec before start time")
 	ErrJobExecWrongStatus = errors.New("job execution with wrong status")
-	ErrJobExecWrongTime   = errors.New("job execution with wrong time")
+	ErrJobExecTooEarly    = errors.New("job execution too early")
+	ErrJobExecAfterEnd    = errors.New("job execution after end time")
 )
 
 func New(err error, str string) error {

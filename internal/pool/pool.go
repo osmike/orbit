@@ -15,7 +15,7 @@ type Job interface {
 	UpdateState(state domain.StateDTO)
 	GetDelay() time.Duration
 	NextRun() time.Time
-	CanExecute() bool
+	CanExecute() error
 	ExecFunc()
 }
 

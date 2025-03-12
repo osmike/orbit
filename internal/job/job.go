@@ -201,20 +201,20 @@ func (j *Job) CanExecute() error {
 	defer j.mu.Unlock()
 	// Ensure the job is not already running or blocked from execution.
 	if j.GetStatus() != domain.Waiting {
-		return false
+		return errs.New(errs.ErrJobExecWrongStatus, j.ID)
 	}
 
 	// Prevent execution before the scheduled start time.
 	if time.Now().Before(j.StartAt) {
-		return false
+		return errs.New(errs.ErrJobExecTooEarly, j.ID)
 	}
 
 	// Stop execution if the job's allowed execution window has expired.
 	if time.Now().After(j.EndAt) {
-		return false
+		return errs.New(errs.ErrJobExecAfterEnd, j.ID)
 	}
 
-	return true
+	return nil
 }
 
 func (j *Job) ProcessJobStart(start time.Time) {
@@ -228,11 +228,5 @@ func (j *Job) ProcessJobStart(start time.Time) {
 }
 
 func (j *Job) ProcessJobEnd(start time.Time, status domain.JobStatus, err error) {
-	execTime := time.Since(start).Nanoseconds()
-	j.UpdateState(domain.StateDTO{
-		StartAt:       start,
-		EndAt:         time.Now(),
-		Status:        status,
-		ExecutionTime: execTime,
-	})
+	j.state.SetEndState(j.Retry.ResetOnSuccess, start, status, err)
 }
