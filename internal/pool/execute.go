@@ -35,7 +35,7 @@ func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) error {
 			return nil
 		case errors.Is(err, errs.ErrJobExecAfterEnd):
 			job.SetStatus(domain.Ended)
-		case errors.Is(err, errs.ErrJobExecWrongStatus):
+		case errors.Is(err, errs.ErrJobWrongStatus):
 			return errs.New(err, meta.ID)
 		default:
 			return err

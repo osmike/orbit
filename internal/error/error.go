@@ -24,12 +24,13 @@ var (
 )
 
 var (
-	ErrJobPanicked        = errors.New("job panicked")
-	ErrJobTimout          = errors.New("job timed out")
-	ErrJobExecution       = errors.New("job exec before start time")
-	ErrJobExecWrongStatus = errors.New("job execution with wrong status")
-	ErrJobExecTooEarly    = errors.New("job execution too early")
-	ErrJobExecAfterEnd    = errors.New("job execution after end time")
+	ErrJobPanicked     = errors.New("job panicked")
+	ErrJobTimout       = errors.New("job timed out")
+	ErrJobExecution    = errors.New("job exec before start time")
+	ErrJobWrongStatus  = errors.New("job with wrong status")
+	ErrJobExecTooEarly = errors.New("job execution too early")
+	ErrJobExecAfterEnd = errors.New("job execution after end time")
+	ErrJobPaused       = errors.New("job is already paused")
 )
 
 func New(err error, str string) error {

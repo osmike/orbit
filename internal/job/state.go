@@ -108,18 +108,18 @@ func (s *state) GetState() domain.StateDTO {
 	}
 }
 
-func (s *state) SetEndState(resOnSuccess bool, start time.Time, status domain.JobStatus, err error) error {
+func (s *state) SetEndState(resOnSuccess bool, start time.Time, status domain.JobStatus, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.EndAt = time.Now()
+	s.ExecutionTime = time.Since(start).Nanoseconds()
 	if !s.TrySetStatus([]domain.JobStatus{domain.Running, domain.Waiting}, status) {
-		return errs.New(errs.ErrJobExecWrongStatus, fmt.Sprintf("wrong status transition from %s to %s", s.Status, status))
+		s.Status = domain.Error
+		s.Error = errs.New(errs.ErrJobWrongStatus, fmt.Sprintf("wrong status transition from %s to %s", s.Status, status))
 	}
 	if s.Error != nil && resOnSuccess && err == nil {
 		s.currentRetry = 0
 	}
 	s.Status = domain.Completed
-	s.ExecutionTime = time.Since(start).Nanoseconds()
 	s.Error = err
-	s.EndAt = time.Now()
-	return nil
 }

@@ -48,7 +48,6 @@ func (j *Job) ExecFunc() {
 	if j.Hooks.OnStart != nil {
 		if err := j.Hooks.OnStart(ctrl); err != nil {
 			finalStatus, finalErr = domain.Error, err
-			return
 		}
 	}
 

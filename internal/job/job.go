@@ -201,7 +201,7 @@ func (j *Job) CanExecute() error {
 	defer j.mu.Unlock()
 	// Ensure the job is not already running or blocked from execution.
 	if j.GetStatus() != domain.Waiting {
-		return errs.New(errs.ErrJobExecWrongStatus, j.ID)
+		return errs.New(errs.ErrJobWrongStatus, j.ID)
 	}
 
 	// Prevent execution before the scheduled start time.
@@ -229,4 +229,20 @@ func (j *Job) ProcessJobStart(start time.Time) {
 
 func (j *Job) ProcessJobEnd(start time.Time, status domain.JobStatus, err error) {
 	j.state.SetEndState(j.Retry.ResetOnSuccess, start, status, err)
+}
+
+func (j *Job) Stop() {
+	j.cancel()
+	j.UpdateState(domain.StateDTO{
+		EndAt:  time.Now(),
+		Status: domain.Stopped,
+	})
+}
+
+func (j *Job) Pause() {
+	select {
+	case j.pauseCh <- struct{}{}:
+		j.SetStatus(domain.Paused)
+	default:
+	}
 }
