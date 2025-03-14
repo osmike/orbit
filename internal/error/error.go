@@ -26,11 +26,17 @@ var (
 var (
 	ErrJobPanicked     = errors.New("job panicked")
 	ErrJobTimout       = errors.New("job timed out")
-	ErrJobExecution    = errors.New("job exec before start time")
+	ErrJobExecution    = errors.New("error in job execution")
 	ErrJobWrongStatus  = errors.New("job with wrong status")
 	ErrJobExecTooEarly = errors.New("job execution too early")
 	ErrJobExecAfterEnd = errors.New("job execution after end time")
 	ErrJobPaused       = errors.New("job is already paused")
+)
+
+var (
+	ErrFinallyHook   = errors.New("error in finally hook")
+	ErrOnStartHook   = errors.New("error in onstart hook")
+	ErrOnSuccessHook = errors.New("error in onsuccess hook")
 )
 
 func New(err error, str string) error {

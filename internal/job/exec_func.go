@@ -1,25 +1,20 @@
 package job
 
 import (
-	"go-scheduler/internal/domain"
-	"time"
+	"fmt"
+	errs "go-scheduler/internal/error"
 )
 
-// ExecFunc executes the job function, handling lifecycle hooks and updating execution metrics.
+// ExecFunc executes the job function, triggering lifecycle hooks and returning execution errors.
 //
-// This function performs the following steps:
-// 1. Initializes FnControl for managing execution state.
-// 2. Calls the OnStart hook if defined, aborting execution if it fails.
-// 3. Executes the job's main function.
-// 4. Calls the OnSuccess hook if the job completes successfully.
-// 5. Calls the Finally hook in a defer statement, allowing it to override the final status if needed.
-// 6. Ensures that ProcessJobEnd is always executed exactly once, updating job execution results.
-//
-// The job lifecycle hooks (`OnStart`, `OnSuccess`, `OnError`, and `Finally`) allow for custom behavior
-// before, after, and during execution. The `Finally` hook can override the job status if it fails.
-func (j *Job) ExecFunc() {
-	startTime := time.Now()
-
+// This function follows these steps:
+// 1. Initializes execution control with FnControl.
+// 2. Runs OnStart hook, aborting execution if it fails.
+// 3. Executes the main job function.
+// 4. Runs OnSuccess hook if the job succeeds.
+// 5. Executes the Finally hook in defer, allowing it to modify the final error.
+// 6. Ensures the returned error reflects the actual execution outcome.
+func (j *Job) ExecFunc() (err error) {
 	// Initialize execution control
 	ctrl := &FnControl{
 		Ctx:        j.ctx,
@@ -28,43 +23,36 @@ func (j *Job) ExecFunc() {
 		data:       &j.state.Data,
 	}
 
-	// Default final status and error
-	var finalStatus = domain.Completed
-	var finalErr error
-
-	// Ensure ProcessJobEnd is always executed, even if the job fails
+	// Ensure Finally hook always executes
 	defer func() {
-		// Execute Finally hook, allowing it to override the final job status
 		if j.Hooks.Finally != nil {
-			if err := j.Hooks.Finally(ctrl); err != nil {
-				finalStatus, finalErr = domain.Error, err
+			if finallyErr := j.Hooks.Finally(ctrl); finallyErr != nil {
+				err = errs.New(errs.ErrFinallyHook, fmt.Sprintf("job id: %s, error: %v", j.ID, finallyErr))
 			}
 		}
-		// Finalize job execution, updating execution time and status
-		j.ProcessJobEnd(startTime, finalStatus, finalErr)
 	}()
 
-	// Execute the OnStart hook if defined
+	// Run OnStart hook
 	if j.Hooks.OnStart != nil {
-		if err := j.Hooks.OnStart(ctrl); err != nil {
-			finalStatus, finalErr = domain.Error, err
+		if hookErr := j.Hooks.OnStart(ctrl); hookErr != nil {
+			return errs.New(errs.ErrOnStartHook, fmt.Sprintf("job id: %s, error: %v", j.ID, hookErr))
 		}
 	}
 
-	// Execute the main job function
-	if err := j.Fn(ctrl); err != nil {
-		finalStatus, finalErr = domain.Error, err
+	// Execute the job function
+	if execErr := j.Fn(ctrl); execErr != nil {
 		if j.Hooks.OnError != nil {
-			j.Hooks.OnError(ctrl, err)
+			j.Hooks.OnError(ctrl, execErr)
 		}
-		return
+		return errs.New(errs.ErrJobExecution, fmt.Sprintf("job id: %s, error: %v", j.ID, execErr))
 	}
 
-	// Execute the OnSuccess hook if the job completes successfully
+	// Run OnSuccess hook
 	if j.Hooks.OnSuccess != nil {
-		if err := j.Hooks.OnSuccess(ctrl); err != nil {
-			finalStatus, finalErr = domain.Error, err
-			return
+		if successErr := j.Hooks.OnSuccess(ctrl); successErr != nil {
+			return errs.New(errs.ErrOnSuccessHook, fmt.Sprintf("job id: %s, error: %v", j.ID, successErr))
 		}
 	}
+
+	return nil
 }
