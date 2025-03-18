@@ -11,14 +11,14 @@ import (
 type Job interface {
 	GetMetadata() domain.JobDTO
 	GetStatus() domain.JobStatus
-	SetStatus(status domain.JobStatus)
-	TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) bool
 	UpdateStateWithStrict(state domain.StateDTO)
 	UpdateState(state domain.StateDTO)
-	GetDelay() time.Duration
 	NextRun() time.Time
+	ProcessStart(start time.Time)
+	ProcessRun() error
+	ProcessEnd(start time.Time, status domain.JobStatus, err error)
 	CanExecute() error
-	ExecFunc()
+	ExecFunc() error
 	Stop()
 }
 

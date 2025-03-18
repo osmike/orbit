@@ -56,11 +56,12 @@ func (s *state) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus
 	return false
 }
 
-// SetExecutionTime safely updates the execution time of the job.
-func (s *state) SetExecutionTime(executionTime int64) {
+// UpdateExecutionTime safely updates the execution time of the job.
+func (s *state) UpdateExecutionTime() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.ExecutionTime = executionTime
+	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
+	return s.ExecutionTime
 }
 
 // Update modifies the job state based on a given StateDTO.
@@ -75,6 +76,7 @@ func (s *state) Update(state domain.StateDTO, strict bool) {
 		s.StartAt = state.StartAt
 		s.Data = state.Data
 		s.Error = state.Error
+		s.ExecutionTime = state.ExecutionTime
 		return
 	}
 
@@ -89,6 +91,9 @@ func (s *state) Update(state domain.StateDTO, strict bool) {
 	}
 	if state.Data != nil {
 		s.Data = state.Data
+	}
+	if state.ExecutionTime > 0 {
+		s.ExecutionTime = state.ExecutionTime
 	}
 }
 

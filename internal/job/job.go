@@ -159,6 +159,15 @@ func (j *Job) UpdateState(state domain.StateDTO) {
 	j.state.Update(state, false)
 }
 
+func (j *Job) ProcessRun() error {
+	execTime := j.state.UpdateExecutionTime()
+	// If the job exceeds its timeout
+	if time.Duration(execTime) > j.Timeout {
+		return errs.New(errs.ErrJobTimout, j.ID)
+	}
+	return nil
+}
+
 // NextRun calculates the exact next scheduled execution time of the job.
 //
 // It supports two scheduling modes:
@@ -217,7 +226,7 @@ func (j *Job) CanExecute() error {
 	return nil
 }
 
-func (j *Job) ProcessJobStart(start time.Time) {
+func (j *Job) ProcessStart(start time.Time) {
 	j.UpdateState(domain.StateDTO{
 		StartAt:       start,
 		EndAt:         time.Time{},
@@ -227,7 +236,7 @@ func (j *Job) ProcessJobStart(start time.Time) {
 	})
 }
 
-func (j *Job) ProcessJobEnd(start time.Time, status domain.JobStatus, err error) {
+func (j *Job) ProcessEnd(start time.Time, status domain.JobStatus, err error) {
 	j.state.SetEndState(j.Retry.ResetOnSuccess, start, status, err)
 }
 
