@@ -11,6 +11,8 @@ import (
 
 // Job represents a scheduled task that can be executed by the scheduler.
 // It holds job execution metadata, scheduling details, and control mechanisms.
+// Job represents a scheduled task that can be executed by the scheduler.
+// It holds job execution metadata, scheduling details, and control mechanisms.
 type Job struct {
 	domain.JobDTO // Embedded struct providing job configuration parameters.
 
@@ -34,8 +36,14 @@ type Job struct {
 	// When a signal is received, the job transitions back to the Running state.
 	resumeCh chan struct{}
 
+	// doneCh is a channel used to signal the completion of job execution.
+	doneCh chan struct{}
+
 	// cron holds the parsed cron schedule if the job is scheduled using a cron expression.
 	cron *CronSchedule
+
+	// currentRetry keeps track of the number of retry attempts made for this job.
+	currentRetry int
 }
 
 // New initializes a new Job instance with the provided job configuration (JobDTO) and execution context.
@@ -100,13 +108,14 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	}
 
 	// Initialize execution state
-	job.state.Init(job.ID)
+	job.state = job.state.Init(job.ID)
 
 	// Create a cancellable execution context
 	job.ctx, job.cancel = context.WithCancel(ctx)
 
 	job.pauseCh = make(chan struct{}, 1)
 	job.resumeCh = make(chan struct{}, 1)
+	job.doneCh = make(chan struct{}, 1)
 
 	return job, nil
 }
@@ -159,12 +168,29 @@ func (j *Job) UpdateState(state domain.StateDTO) {
 	j.state.Update(state, false)
 }
 
+// ProcessRun checks if the job has exceeded its timeout during execution.
+//
+// Returns:
+// - An error if the execution time surpasses the allowed timeout.
+// - nil if the execution is within limits.
 func (j *Job) ProcessRun() error {
 	execTime := j.state.UpdateExecutionTime()
-	// If the job exceeds its timeout
 	if time.Duration(execTime) > j.Timeout {
 		return errs.New(errs.ErrJobTimout, j.ID)
 	}
+	return nil
+}
+
+// Retry increments the retry counter and checks if the job has exceeded the retry limit.
+//
+// Returns:
+// - An error if the retry limit is reached.
+// - nil if the job is allowed to retry.
+func (j *Job) Retry() error {
+	if j.currentRetry >= int(j.JobDTO.Retry.Count) {
+		return errs.New(errs.ErrJobRetryLimit, j.ID)
+	}
+	j.currentRetry++
 	return nil
 }
 
@@ -226,9 +252,11 @@ func (j *Job) CanExecute() error {
 	return nil
 }
 
-func (j *Job) ProcessStart(start time.Time) {
+// ProcessStart updates the job state at the beginning of execution.
+func (j *Job) ProcessStart() {
+	startTime := time.Now()
 	j.UpdateState(domain.StateDTO{
-		StartAt:       start,
+		StartAt:       startTime,
 		EndAt:         time.Time{},
 		Status:        domain.Running,
 		ExecutionTime: 0,
@@ -236,22 +264,49 @@ func (j *Job) ProcessStart(start time.Time) {
 	})
 }
 
-func (j *Job) ProcessEnd(start time.Time, status domain.JobStatus, err error) {
-	j.state.SetEndState(j.Retry.ResetOnSuccess, start, status, err)
+// ProcessEnd updates the job state at the end of execution, based on the final status and error.
+func (j *Job) ProcessEnd(status domain.JobStatus, err error) {
+	j.state.SetEndState(j.JobDTO.Retry.ResetOnSuccess, status, err)
 }
 
+// Stop cancels the job execution and updates its status accordingly.
 func (j *Job) Stop() {
 	j.cancel()
-	j.UpdateState(domain.StateDTO{
-		EndAt:  time.Now(),
-		Status: domain.Stopped,
-	})
+	switch j.GetStatus() {
+	case domain.Completed, domain.Error:
+		j.SetStatus(domain.Stopped)
+	default:
+		j.UpdateState(domain.StateDTO{
+			EndAt:  time.Now(),
+			Status: domain.Stopped,
+		})
+	}
 }
 
-func (j *Job) Pause() {
+// Pause sends a pause signal to the job, transitioning it to the Paused state.
+func (j *Job) Pause() error {
+	if !j.TrySetStatus([]domain.JobStatus{domain.Running}, domain.Paused) {
+		return errs.New(errs.ErrJobNotRunning, j.ID)
+	}
 	select {
 	case j.pauseCh <- struct{}{}:
-		j.SetStatus(domain.Paused)
 	default:
 	}
+	return nil
+}
+
+// Resume sends a resume signal to the job, allowing it to continue execution if it was paused.
+func (j *Job) Resume() error {
+	switch j.GetStatus() {
+	case domain.Paused:
+		select {
+		case j.resumeCh <- struct{}{}:
+		default:
+		}
+	case domain.Stopped:
+		j.SetStatus(domain.Waiting)
+	default:
+		return errs.New(errs.ErrJobNotPausedOrStopped, j.ID)
+	}
+	return nil
 }

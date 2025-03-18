@@ -113,11 +113,11 @@ func (s *state) GetState() domain.StateDTO {
 	}
 }
 
-func (s *state) SetEndState(resOnSuccess bool, start time.Time, status domain.JobStatus, err error) {
+func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.EndAt = time.Now()
-	s.ExecutionTime = time.Since(start).Nanoseconds()
+	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
 	if !s.TrySetStatus([]domain.JobStatus{domain.Running, domain.Waiting}, status) {
 		s.Status = domain.Error
 		s.Error = errs.New(errs.ErrJobWrongStatus, fmt.Sprintf("wrong status transition from %s to %s", s.Status, status))
@@ -125,6 +125,5 @@ func (s *state) SetEndState(resOnSuccess bool, start time.Time, status domain.Jo
 	if s.Error != nil && resOnSuccess && err == nil {
 		s.currentRetry = 0
 	}
-	s.Status = domain.Completed
 	s.Error = err
 }

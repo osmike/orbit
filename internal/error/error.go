@@ -24,13 +24,17 @@ var (
 )
 
 var (
-	ErrJobPanicked     = errors.New("job panicked")
-	ErrJobTimout       = errors.New("job timed out")
-	ErrJobExecution    = errors.New("error in job execution")
-	ErrJobWrongStatus  = errors.New("job with wrong status")
-	ErrJobExecTooEarly = errors.New("job execution too early")
-	ErrJobExecAfterEnd = errors.New("job execution after end time")
-	ErrJobPaused       = errors.New("job is already paused")
+	ErrJobPanicked           = errors.New("job panicked")
+	ErrJobTimout             = errors.New("job timed out")
+	ErrJobExecution          = errors.New("error in job execution")
+	ErrJobWrongStatus        = errors.New("job with wrong status")
+	ErrJobExecTooEarly       = errors.New("job execution too early")
+	ErrJobExecAfterEnd       = errors.New("job execution after end time")
+	ErrJobPaused             = errors.New("job is already paused")
+	ErrJobStillRunning       = errors.New("job is still running")
+	ErrJobRetryLimit         = errors.New("job retry limit reached")
+	ErrJobNotRunning         = errors.New("job is not running")
+	ErrJobNotPausedOrStopped = errors.New("job is not paused or stopped")
 )
 
 var (

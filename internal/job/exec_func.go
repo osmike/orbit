@@ -15,6 +15,11 @@ import (
 // 5. Executes the Finally hook in defer, allowing it to modify the final error.
 // 6. Ensures the returned error reflects the actual execution outcome.
 func (j *Job) ExecFunc() (err error) {
+	select {
+	case <-j.doneCh:
+	default:
+		return errs.New(errs.ErrJobStillRunning, j.ID)
+	}
 	// Initialize execution control
 	ctrl := &FnControl{
 		Ctx:        j.ctx,
@@ -30,6 +35,7 @@ func (j *Job) ExecFunc() (err error) {
 				err = errs.New(errs.ErrFinallyHook, fmt.Sprintf("job id: %s, error: %v", j.ID, finallyErr))
 			}
 		}
+		j.doneCh <- struct{}{}
 	}()
 
 	// Run OnStart hook

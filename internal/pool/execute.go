@@ -26,7 +26,6 @@ import (
 func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 	meta := job.GetMetadata()
 
-	startTime := time.Now()
 	var (
 		err    error
 		status = domain.Completed
@@ -52,8 +51,6 @@ func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 	// Launch execution in a goroutine
 	wg.Add(1) // Ensure the job is accounted for
 	go func() {
-		// Mark job as started
-		job.ProcessStart(startTime)
 
 		defer func() {
 			// Release the semaphore slot
@@ -67,7 +64,7 @@ func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 
 			// Ensure job is marked as finished, with final execution status
 			wg.Done()
-			job.ProcessEnd(startTime, status, err)
+			job.ProcessEnd(status, err)
 		}()
 
 		// Acquire a semaphore slot to enforce max worker constraints
@@ -76,11 +73,13 @@ func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 			// Successfully acquired a slot, execution continues
 		case <-time.After(5 * time.Second): // Prevents deadlocks
 			// Job could not acquire a slot, mark execution as failed
-			startTime = time.Now() // Reset start time to prevent incorrect execution time
 			err = errs.New(errs.ErrTooManyJobs, meta.ID)
 			status = domain.Error
 			return
 		}
+
+		// Mark job as started
+		job.ProcessStart()
 
 		// Execute the job function
 		err = job.ExecFunc()

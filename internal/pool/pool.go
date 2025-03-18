@@ -14,12 +14,15 @@ type Job interface {
 	UpdateStateWithStrict(state domain.StateDTO)
 	UpdateState(state domain.StateDTO)
 	NextRun() time.Time
-	ProcessStart(start time.Time)
+	ProcessStart()
 	ProcessRun() error
-	ProcessEnd(start time.Time, status domain.JobStatus, err error)
+	ProcessEnd(status domain.JobStatus, err error)
 	CanExecute() error
+	Retry() error
 	ExecFunc() error
 	Stop()
+	Pause()
+	Resume()
 }
 
 type JobData sync.Map
@@ -47,28 +50,6 @@ func (p *Pool) GetJobByID(id string) (Job, error) {
 	return jobInterface.(Job), nil
 }
 
-func (p *Pool) AddJob(job Job) error {
-	meta := job.GetMetadata()
-	if _, ok := p.Jobs.Load(meta.ID); ok {
-		return errs.New(errs.ErrIDExists, meta.ID)
-	}
-	if job.GetStatus() != domain.Waiting {
-		return errs.New(errs.ErrJobWrongStatus, meta.ID)
-	}
-	p.Jobs.Store(meta.ID, job)
-	return nil
-}
-
-func (p *Pool) RemoveJob(id string) error {
-	job, err := p.GetJobByID(id)
-	if err != nil {
-		return err
-	}
-	job.Stop()
-	p.Jobs.Delete(id)
-	return nil
-}
-
 func (p *Pool) Run() {
 	ticker := time.NewTicker(p.CheckInterval)
 	defer ticker.Stop()
@@ -84,14 +65,13 @@ func (p *Pool) Run() {
 				job := value.(Job)
 				switch job.GetStatus() {
 				case domain.Waiting:
-					if time.Now().After(job.NextRun()) {
-						p.Execute(job, sem, wg)
-					}
+					p.processWaiting(job, sem, wg)
 				case domain.Running:
-				case domain.Paused:
-				case domain.Stopped:
+					p.processRunning(job)
 				case domain.Completed:
-				case domain.Ended:
+					p.processCompleted(job)
+				case domain.Error:
+					p.processError(job)
 
 				}
 				return true
