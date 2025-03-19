@@ -120,6 +120,10 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	return job, nil
 }
 
+func (j *Job) GetMetadata() domain.JobDTO {
+	return j.JobDTO
+}
+
 // GetStatus retrieves the current execution status of the job.
 //
 // Returns:

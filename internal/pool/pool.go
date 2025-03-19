@@ -21,29 +21,28 @@ type Job interface {
 	Retry() error
 	ExecFunc() error
 	Stop()
-	Pause()
-	Resume()
+	Pause() error
+	Resume() error
 }
 
 type JobData sync.Map
 
 type Pool struct {
 	domain.Pool
-	History sync.Map
-	Jobs    sync.Map
-	ctx     context.Context
-	cancel  context.CancelFunc
+	jobs   sync.Map
+	Ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (p *Pool) Init(ctx context.Context, cfg domain.Pool) *Pool {
 	pool := &Pool{}
-	p.ctx, p.cancel = context.WithCancel(ctx)
+	p.Ctx, p.cancel = context.WithCancel(ctx)
 	pool.Pool = cfg
 	return pool
 }
 
 func (p *Pool) GetJobByID(id string) (Job, error) {
-	jobInterface, ok := p.Jobs.Load(id)
+	jobInterface, ok := p.jobs.Load(id)
 	if !ok {
 		return nil, errs.New(errs.ErrJobNotFound, id)
 	}
@@ -57,11 +56,11 @@ func (p *Pool) Run() {
 	var wg *sync.WaitGroup
 	for {
 		select {
-		case <-p.ctx.Done(): // Handle graceful shutdown
+		case <-p.Ctx.Done(): // Handle graceful shutdown
 			wg.Wait()
 			return
 		case <-ticker.C: // Periodically process jobs
-			p.Jobs.Range(func(key, value any) bool {
+			p.jobs.Range(func(key, value any) bool {
 				job := value.(Job)
 				switch job.GetStatus() {
 				case domain.Waiting:
@@ -79,4 +78,8 @@ func (p *Pool) Run() {
 		}
 	}
 
+}
+
+func (p *Pool) Stop() {
+	p.cancel()
 }
