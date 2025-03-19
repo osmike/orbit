@@ -27,8 +27,9 @@ func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 	meta := job.GetMetadata()
 
 	var (
-		err    error
-		status = domain.Completed
+		err      error
+		status   = domain.Completed
+		userData map[string]interface{}
 	)
 
 	// Check if the job is allowed to execute
@@ -65,6 +66,7 @@ func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 			// Ensure job is marked as finished, with final execution status
 			wg.Done()
 			job.ProcessEnd(status, err)
+			p.mon.SaveMetrics(userData)
 		}()
 
 		// Acquire a semaphore slot to enforce max worker constraints
@@ -82,7 +84,7 @@ func (p *Pool) Execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 		job.ProcessStart()
 
 		// Execute the job function
-		err = job.ExecFunc()
+		err = job.Execute()
 		if err != nil {
 			status = domain.Error
 		}

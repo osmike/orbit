@@ -44,6 +44,8 @@ type Job struct {
 
 	// currentRetry keeps track of the number of retry attempts made for this job.
 	currentRetry int
+
+	ctrl *FnControl
 }
 
 // New initializes a new Job instance with the provided job configuration (JobDTO) and execution context.
@@ -116,12 +118,22 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	job.pauseCh = make(chan struct{}, 1)
 	job.resumeCh = make(chan struct{}, 1)
 	job.doneCh = make(chan struct{}, 1)
+	job.ctrl = &FnControl{
+		Ctx:        job.ctx,
+		data:       &map[string]interface{}{},
+		PauseChan:  job.pauseCh,
+		ResumeChan: job.resumeCh,
+	}
 
 	return job, nil
 }
 
 func (j *Job) GetMetadata() domain.JobDTO {
 	return j.JobDTO
+}
+
+func (j *Job) GetState() domain.StateDTO {
+	return j.state.GetState()
 }
 
 // GetStatus retrieves the current execution status of the job.
@@ -271,46 +283,4 @@ func (j *Job) ProcessStart() {
 // ProcessEnd updates the job state at the end of execution, based on the final status and error.
 func (j *Job) ProcessEnd(status domain.JobStatus, err error) {
 	j.state.SetEndState(j.JobDTO.Retry.ResetOnSuccess, status, err)
-}
-
-// Stop cancels the job execution and updates its status accordingly.
-func (j *Job) Stop() {
-	j.cancel()
-	switch j.GetStatus() {
-	case domain.Completed, domain.Error:
-		j.SetStatus(domain.Stopped)
-	default:
-		j.UpdateState(domain.StateDTO{
-			EndAt:  time.Now(),
-			Status: domain.Stopped,
-		})
-	}
-}
-
-// Pause sends a pause signal to the job, transitioning it to the Paused state.
-func (j *Job) Pause() error {
-	if !j.TrySetStatus([]domain.JobStatus{domain.Running}, domain.Paused) {
-		return errs.New(errs.ErrJobNotRunning, j.ID)
-	}
-	select {
-	case j.pauseCh <- struct{}{}:
-	default:
-	}
-	return nil
-}
-
-// Resume sends a resume signal to the job, allowing it to continue execution if it was paused.
-func (j *Job) Resume() error {
-	switch j.GetStatus() {
-	case domain.Paused:
-		select {
-		case j.resumeCh <- struct{}{}:
-		default:
-		}
-	case domain.Stopped:
-		j.SetStatus(domain.Waiting)
-	default:
-		return errs.New(errs.ErrJobNotPausedOrStopped, j.ID)
-	}
-	return nil
 }

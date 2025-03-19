@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"maps"
 )
 
 // Fn defines the function signature that every job must implement.
@@ -29,10 +30,8 @@ type FnControl struct {
 	data *map[string]interface{}
 }
 
-// SaveUserInfo allows a running job to store custom key-value metadata.
+// SaveUserData allows a running job to store custom key-value metadata.
 // This can be used for logging, debugging, or sharing execution state across multiple runs of the same job.
-func (ctrl *FnControl) SaveUserInfo(data map[string]interface{}) {
-	for k, v := range data {
-		(*ctrl.data)[k] = v
-	}
+func (ctrl *FnControl) SaveUserData(data map[string]interface{}) {
+	maps.Copy((*ctrl.data), data)
 }

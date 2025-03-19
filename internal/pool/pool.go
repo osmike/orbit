@@ -19,9 +19,9 @@ type Job interface {
 	ProcessEnd(status domain.JobStatus, err error)
 	CanExecute() error
 	Retry() error
-	ExecFunc() error
+	Execute() error
 	Stop()
-	Pause() error
+	Pause(timeout time.Duration) error
 	Resume() error
 }
 
@@ -32,12 +32,14 @@ type Pool struct {
 	jobs   sync.Map
 	Ctx    context.Context
 	cancel context.CancelFunc
+	mon    domain.Monitoring
 }
 
-func (p *Pool) Init(ctx context.Context, cfg domain.Pool) *Pool {
+func (p *Pool) Init(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) *Pool {
 	pool := &Pool{}
 	p.Ctx, p.cancel = context.WithCancel(ctx)
 	pool.Pool = cfg
+	pool.mon = mon
 	return pool
 }
 
@@ -78,8 +80,4 @@ func (p *Pool) Run() {
 		}
 	}
 
-}
-
-func (p *Pool) Stop() {
-	p.cancel()
 }

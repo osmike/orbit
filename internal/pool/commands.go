@@ -3,6 +3,7 @@ package pool
 import (
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
+	"time"
 )
 
 func (p *Pool) AddJob(job Job) error {
@@ -27,12 +28,15 @@ func (p *Pool) RemoveJob(id string) error {
 	return nil
 }
 
-func (p *Pool) PauseJob(id string) error {
+func (p *Pool) PauseJob(id string, timeout time.Duration) error {
 	job, err := p.GetJobByID(id)
 	if err != nil {
 		return err
 	}
-	job.Pause()
+	if timeout == 0 {
+		timeout = domain.DEFAULT_PAUSE_TIMEOUT
+	}
+	job.Pause(timeout)
 	return nil
 }
 
@@ -52,4 +56,8 @@ func (p *Pool) StopJob(id string) error {
 	}
 	job.Stop()
 	return nil
+}
+
+func (p *Pool) Stop() {
+	p.cancel()
 }

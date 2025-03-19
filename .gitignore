@@ -26,3 +26,4 @@ go.work.sum
 
 .idea
 .old
+.DS_Store

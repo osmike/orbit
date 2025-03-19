@@ -45,6 +45,7 @@ const (
 	DEFAULT_NUM_WORKERS    = 1000
 	DEFAULT_CHECK_INTERVAL = 100 * time.Millisecond
 	DEFAULT_IDLE_TIMEOUT   = 100 * time.Hour
+	DEFAULT_PAUSE_TIMEOUT  = 1 * time.Second
 )
 
 var (

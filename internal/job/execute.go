@@ -2,6 +2,7 @@ package job
 
 import (
 	"fmt"
+	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
 )
 
@@ -14,51 +15,51 @@ import (
 // 4. Runs OnSuccess hook if the job succeeds.
 // 5. Executes the Finally hook in defer, allowing it to modify the final error.
 // 6. Ensures the returned error reflects the actual execution outcome.
-func (j *Job) ExecFunc() (err error) {
+func (j *Job) Execute() (err error) {
 	select {
 	case <-j.doneCh:
+		j.ctrl.data = &map[string]interface{}{}
 	default:
 		return errs.New(errs.ErrJobStillRunning, j.ID)
 	}
-	// Initialize execution control
-	ctrl := &FnControl{
-		Ctx:        j.ctx,
-		PauseChan:  j.pauseCh,
-		ResumeChan: j.resumeCh,
-		data:       &j.state.Data,
-	}
 
 	// Ensure Finally hook always executes
-	defer func() {
-		if j.Hooks.Finally != nil {
-			if finallyErr := j.Hooks.Finally(ctrl); finallyErr != nil {
-				err = errs.New(errs.ErrFinallyHook, fmt.Sprintf("job id: %s, error: %v", j.ID, finallyErr))
-			}
-		}
-		j.doneCh <- struct{}{}
-	}()
+	defer j.finalizeExecution()
 
 	// Run OnStart hook
-	if j.Hooks.OnStart != nil {
-		if hookErr := j.Hooks.OnStart(ctrl); hookErr != nil {
-			return errs.New(errs.ErrOnStartHook, fmt.Sprintf("job id: %s, error: %v", j.ID, hookErr))
-		}
+	if err := j.runHook(j.Hooks.OnStart, errs.ErrOnStartHook); err != nil {
+		return err
 	}
 
 	// Execute the job function
-	if execErr := j.Fn(ctrl); execErr != nil {
+	if execErr := j.Fn(j.ctrl); execErr != nil {
 		if j.Hooks.OnError != nil {
-			j.Hooks.OnError(ctrl, execErr)
+			j.Hooks.OnError(j.ctrl, execErr)
 		}
 		return errs.New(errs.ErrJobExecution, fmt.Sprintf("job id: %s, error: %v", j.ID, execErr))
 	}
 
 	// Run OnSuccess hook
-	if j.Hooks.OnSuccess != nil {
-		if successErr := j.Hooks.OnSuccess(ctrl); successErr != nil {
-			return errs.New(errs.ErrOnSuccessHook, fmt.Sprintf("job id: %s, error: %v", j.ID, successErr))
+	return j.runHook(j.Hooks.OnSuccess, errs.ErrOnSuccessHook)
+}
+
+func (j *Job) runHook(hook func(ctrl domain.FnControl) error, errType error) error {
+	if hook != nil {
+		if err := hook(j.ctrl); err != nil {
+			return errs.New(errType, fmt.Sprintf("job id: %s, error: %v", j.ID, err))
 		}
 	}
-
 	return nil
+}
+
+func (j *Job) finalizeExecution() {
+	if j.Hooks.Finally != nil {
+		j.Hooks.Finally(j.ctrl)
+	}
+
+	select {
+	case <-j.doneCh:
+	default:
+	}
+	j.doneCh <- struct{}{}
 }
