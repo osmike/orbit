@@ -88,7 +88,7 @@ type HooksFunc struct {
 // Methods:
 //   - SaveData(map[string]interface{}): Stores custom job runtime metadata.
 type FnControl struct {
-	*job.FnControl
+	domain.FnControl
 }
 
 // Monitoring interface represents components responsible for collecting, storing,

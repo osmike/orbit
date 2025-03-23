@@ -97,10 +97,10 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	job.doneCh = make(chan struct{}, 1)
 
 	job.ctrl = &FnControl{
-		Ctx:        job.ctx,
+		ctx:        job.ctx,
 		data:       &sync.Map{},
-		PauseChan:  job.pauseCh,
-		ResumeChan: job.resumeCh,
+		pauseChan:  job.pauseCh,
+		resumeChan: job.resumeCh,
 	}
 
 	return job, nil
