@@ -9,7 +9,7 @@ import (
 )
 
 // CronSchedule represents a parsed cron expression.
-// It stores allowed values for each time unit (minutes, hours, etc.).
+// It defines allowed scheduling times using slices of integers for each cron field (minutes, hours, days, months, weekdays).
 type CronSchedule struct {
 	Minutes  []int // Allowed minute values (0-59)
 	Hours    []int // Allowed hour values (0-23)
@@ -18,25 +18,25 @@ type CronSchedule struct {
 	Weekdays []int // Allowed weekday values (0-6, where 0 = Sunday)
 }
 
-// parseField parses a cron field and returns a list of allowed values.
+// parseField parses an individual cron expression field (e.g., minutes, hours)
+// and returns a slice of integers representing the allowed values.
 //
-// The function supports:
-// - "*" (wildcard) -> includes all values within the range
-// - "*/N" (step) -> includes values at intervals of N
-// - "X-Y" (range) -> includes all values from X to Y
-// - "X,Y,Z" (list) -> includes specific values
+// Supported syntax:
+//   - "*": wildcard, matches all values within the range.
+//   - "*/N": step values, matches every Nth value in the range.
+//   - "X-Y": range values, matches all values between X and Y inclusive.
+//   - "X,Y,Z": specific values, matches only listed values.
 //
 // Parameters:
-// - field: The cron field string (e.g., "*/5", "1,2,3", "10-15").
-// - min, max: The allowed range for this field.
+//   - field: Cron field string to parse (e.g., "*/5", "1,2,3", "10-15").
+//   - min, max: Allowed range for this cron field.
 //
 // Returns:
-// - A slice of integers representing the parsed values.
-// - An error if the input is invalid.
+//   - A slice of parsed integer values.
+//   - An error if parsing fails due to invalid syntax or values out of range.
 func parseField(field string, min int, max int) ([]int, error) {
 	var values []int
 
-	// Wildcard: selects all possible values in the range
 	if field == "*" {
 		for i := min; i <= max; i++ {
 			values = append(values, i)
@@ -44,34 +44,32 @@ func parseField(field string, min int, max int) ([]int, error) {
 		return values, nil
 	}
 
-	// Splitting multiple values (comma-separated)
 	parts := strings.Split(field, ",")
 	for _, part := range parts {
-		// Step values (*/N)
 		if strings.Contains(part, "*/") {
 			step, err := strconv.Atoi(strings.TrimPrefix(part, "*/"))
-			if err != nil {
+			if err != nil || step <= 0 {
 				return nil, fmt.Errorf("invalid step in field: %s", part)
 			}
 			for i := min; i <= max; i += step {
 				values = append(values, i)
 			}
-		} else if strings.Contains(part, "-") { // Range values (X-Y)
+		} else if strings.Contains(part, "-") {
 			rangeParts := strings.Split(part, "-")
 			if len(rangeParts) != 2 {
 				return nil, fmt.Errorf("invalid range: %s", part)
 			}
 			start, err1 := strconv.Atoi(rangeParts[0])
 			end, err2 := strconv.Atoi(rangeParts[1])
-			if err1 != nil || err2 != nil || start > end {
+			if err1 != nil || err2 != nil || start > end || start < min || end > max {
 				return nil, fmt.Errorf("invalid range: %s", part)
 			}
 			for i := start; i <= end; i++ {
 				values = append(values, i)
 			}
-		} else { // Single numeric values (X)
+		} else {
 			val, err := strconv.Atoi(part)
-			if err != nil {
+			if err != nil || val < min || val > max {
 				return nil, fmt.Errorf("invalid value: %s", part)
 			}
 			values = append(values, val)
@@ -81,21 +79,17 @@ func parseField(field string, min int, max int) ([]int, error) {
 	return values, nil
 }
 
-// ParseCron parses a cron expression into a CronSchedule.
+// ParseCron parses a cron expression string and returns a CronSchedule instance.
+// The cron expression must contain exactly five fields separated by spaces:
 //
-// The cron expression must consist of exactly five fields:
-// - Minutes (0-59)
-// - Hours (0-23)
-// - Days of the month (1-31)
-// - Months (1-12)
-// - Weekdays (0-6, where 0 = Sunday)
+//	Minutes (0-59), Hours (0-23), Day-of-month (1-31), Month (1-12), Weekday (0-6, Sunday = 0).
 //
 // Parameters:
-// - cronExpr: A cron expression string (e.g., "*/5 * * * *").
+//   - cronExpr: The cron expression string (e.g., "*/5 * * * *").
 //
 // Returns:
-// - A CronSchedule struct with parsed values.
-// - An error if the input cron expression is invalid.
+//   - A pointer to a CronSchedule with parsed fields.
+//   - An error if the cron expression syntax is invalid.
 func ParseCron(cronExpr string) (*CronSchedule, error) {
 	parts := strings.Fields(cronExpr)
 	if len(parts) != 5 {
@@ -104,23 +98,23 @@ func ParseCron(cronExpr string) (*CronSchedule, error) {
 
 	minutes, err := parseField(parts[0], 0, 59)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("minutes field error: %w", err)
 	}
 	hours, err := parseField(parts[1], 0, 23)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("hours field error: %w", err)
 	}
 	days, err := parseField(parts[2], 1, 31)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("days field error: %w", err)
 	}
 	months, err := parseField(parts[3], 1, 12)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("months field error: %w", err)
 	}
 	weekdays, err := parseField(parts[4], 0, 6)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("weekdays field error: %w", err)
 	}
 
 	return &CronSchedule{
@@ -132,18 +126,16 @@ func ParseCron(cronExpr string) (*CronSchedule, error) {
 	}, nil
 }
 
-// NextRun calculates the next execution time based on the cron schedule.
-//
-// It searches into the future (up to one year) by efficiently skipping
-// unnecessary checks for unmatched cron conditions.
+// NextRun calculates and returns the next scheduled execution time based on the cron schedule.
+// It efficiently skips unsuitable dates and times to find the next match, looking ahead up to one year.
 //
 // Returns:
-// - The next valid scheduled execution time as time.Time.
-// - If no valid execution time is found (highly unlikely), returns zero time.
+//   - The next scheduled execution time (time.Time).
+//   - Zero-value time if no valid execution time is found within a year (unlikely scenario).
 func (cs *CronSchedule) NextRun() time.Time {
 	now := time.Now().Truncate(time.Minute).Add(time.Minute)
 
-	for i := 0; i < 365*24*60; i++ { // safety limit: 1 year
+	for i := 0; i < 365*24*60; i++ { // Safety limit: search up to 1 year ahead
 		if !contains(cs.Months, int(now.Month())) {
 			now = now.AddDate(0, 1, -now.Day()+1).Truncate(24 * time.Hour)
 			continue
@@ -168,17 +160,17 @@ func (cs *CronSchedule) NextRun() time.Time {
 		return now
 	}
 
-	// Should never happen, just a safeguard
+	// Should never happen; provided as a safeguard.
 	return time.Time{}
 }
 
-// matches checks if a given time matches the parsed cron schedule.
+// matches determines if a given time satisfies the cron schedule conditions.
 //
 // Parameters:
-// - t: The time to check.
+//   - t: Time value to evaluate.
 //
 // Returns:
-// - True if the time matches the schedule, otherwise false.
+//   - true if the provided time matches all cron fields; false otherwise.
 func (cs *CronSchedule) matches(t time.Time) bool {
 	return contains(cs.Minutes, t.Minute()) &&
 		contains(cs.Hours, t.Hour()) &&
@@ -187,14 +179,14 @@ func (cs *CronSchedule) matches(t time.Time) bool {
 		contains(cs.Weekdays, int(t.Weekday()))
 }
 
-// contains checks if an integer is present in a slice.
+// contains checks whether a slice of integers contains a specified integer value.
 //
 // Parameters:
-// - arr: The slice of integers.
-// - val: The value to check.
+//   - arr: Slice of integers.
+//   - val: Integer to search for.
 //
 // Returns:
-// - True if the value is found, otherwise false.
+//   - true if the integer is found in the slice; false otherwise.
 func contains(arr []int, val int) bool {
 	for _, v := range arr {
 		if v == val {

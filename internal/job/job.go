@@ -9,118 +9,96 @@ import (
 	"time"
 )
 
-// Job represents a scheduled task that can be executed by the scheduler.
-// It holds job execution metadata, scheduling details, and control mechanisms.
-// Job represents a scheduled task that can be executed by the scheduler.
-// It holds job execution metadata, scheduling details, and control mechanisms.
+// Job represents a scheduled task managed and executed by the scheduler.
+//
+// It encapsulates execution logic, scheduling details, lifecycle control,
+// runtime state, and job metadata.
 type Job struct {
-	domain.JobDTO // Embedded struct providing job configuration parameters.
+	domain.JobDTO // Embedded job configuration parameters.
 
-	// ctx is the execution context of the job, allowing cancellation and timeout control.
-	ctx context.Context
+	ctx    context.Context    // Execution context for cancellation and timeouts.
+	cancel context.CancelFunc // Function to explicitly cancel job execution.
 
-	// cancel is the function used to cancel the job's execution via the context.
-	cancel context.CancelFunc
+	state *state     // Runtime job execution state (status, errors, execution time).
+	mu    sync.Mutex // Mutex to ensure thread-safe state manipulation.
 
-	// state holds the runtime execution details, including status, execution time, and errors.
-	state *state
+	pauseCh  chan struct{} // Channel to signal job pause requests.
+	resumeCh chan struct{} // Channel to signal job resume requests.
+	doneCh   chan struct{} // Channel signaling completion of job execution.
 
-	// mu is a mutex used to synchronize access to the job's state and ensure thread safety.
-	mu sync.Mutex
+	cron *CronSchedule // Parsed cron schedule if job is cron-based.
 
-	// pauseCh is a channel used to pause job execution.
-	// When a signal is received, the job enters the Paused state until resumed.
-	pauseCh chan struct{}
-
-	// resumeCh is a channel used to resume execution of a paused job.
-	// When a signal is received, the job transitions back to the Running state.
-	resumeCh chan struct{}
-
-	// doneCh is a channel used to signal the completion of job execution.
-	doneCh chan struct{}
-
-	// cron holds the parsed cron schedule if the job is scheduled using a cron expression.
-	cron *CronSchedule
-
-	// currentRetry keeps track of the number of retry attempts made for this job.
-	currentRetry int
-
-	ctrl *FnControl
+	currentRetry int        // Number of retries attempted after job failures.
+	ctrl         *FnControl // Control interface passed to the job's main function.
 }
 
-// New initializes a new Job instance with the provided job configuration (JobDTO) and execution context.
+// New creates and initializes a Job instance from the provided configuration and execution context.
 //
-// It performs the following validations:
-// - Ensures the job ID is not empty.
-// - Ensures the job function (Fn) is not nil.
-// - Sets a default job name if not provided.
-// - Validates the scheduling type (either cron or interval, but not both).
-// - Parses the cron expression if provided.
-// - Ensures a valid StartAt and EndAt period.
+// Performs validation and default value initialization:
+//   - Ensures Job ID and function are provided.
+//   - Sets Job Name to Job ID if not specified.
+//   - Verifies scheduling parameters (interval or cron, but not both).
+//   - Parses and validates cron expressions.
+//   - Initializes default StartAt and EndAt times.
+//   - Sets up the execution context with cancellation support.
+//
+// Parameters:
+//   - jobDTO: Job configuration details.
+//   - ctx: Execution context, allowing external cancellation control.
 //
 // Returns:
-// - A pointer to the initialized Job instance if all validations pass.
-// - An error if the job configuration is invalid.
+//   - A pointer to a fully initialized Job.
+//   - An error if provided configuration parameters are invalid or incomplete.
 func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
-	// Initialize the Job struct
 	job := &Job{
 		JobDTO: jobDTO,
-		state:  &state{}, // Ensure state is properly initialized
+		state:  &state{},
 	}
 
-	// Validate job ID
 	if job.ID == "" {
 		return nil, errs.New(errs.ErrEmptyID, fmt.Sprintf("job name - %s", job.Name))
 	}
 
-	// Validate job function
 	if job.Fn == nil {
 		return nil, errs.New(errs.ErrEmptyFunction, job.ID)
 	}
 
-	// Set job name to ID if empty
 	if job.Name == "" {
 		job.Name = job.ID
 	}
 
-	// Validate scheduling type (either Cron or Interval, not both)
 	if job.Schedule.CronExpr != "" && job.Schedule.Interval > 0 {
 		return nil, errs.New(errs.ErrMixedScheduleType, job.ID)
 	}
 
-	// Parse cron expression if provided
 	if job.Schedule.CronExpr != "" {
-		if cron, err := ParseCron(job.Schedule.CronExpr); err != nil {
+		cron, err := ParseCron(job.Schedule.CronExpr)
+		if err != nil {
 			return nil, errs.New(errs.ErrInvalidCronExpression, fmt.Sprintf("error - %v, id: %s", err, job.ID))
-		} else {
-			job.cron = cron
 		}
+		job.cron = cron
 	}
 
-	// Set default StartAt time
 	if job.StartAt.IsZero() {
 		job.StartAt = time.Now()
 	}
 
-	// Set default EndAt time
 	if job.EndAt.IsZero() {
-		job.EndAt = domain.MAX_END_AT // Use predefined max execution period
+		job.EndAt = domain.MAX_END_AT
 	} else if job.EndAt.Before(job.StartAt) {
 		return nil, errs.New(errs.ErrWrongTime, fmt.Sprintf("ending time cannot be before starting time, id: %s", job.ID))
 	}
 
-	// Initialize execution state
 	job.state = job.state.Init(job.ID)
-
-	// Create a cancellable execution context
 	job.ctx, job.cancel = context.WithCancel(ctx)
 
 	job.pauseCh = make(chan struct{}, 1)
 	job.resumeCh = make(chan struct{}, 1)
 	job.doneCh = make(chan struct{}, 1)
+
 	job.ctrl = &FnControl{
 		Ctx:        job.ctx,
-		data:       &map[string]interface{}{},
+		data:       &sync.Map{},
 		PauseChan:  job.pauseCh,
 		ResumeChan: job.resumeCh,
 	}
@@ -128,159 +106,89 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	return job, nil
 }
 
+// GetMetadata returns a copy of the job's configuration metadata.
+//
+// Returns:
+//   - domain.JobDTO containing configuration details.
 func (j *Job) GetMetadata() domain.JobDTO {
 	return j.JobDTO
 }
 
+// GetState returns the current execution state of the job.
+//
+// Returns:
+//   - domain.StateDTO containing current state details.
 func (j *Job) GetState() domain.StateDTO {
 	return j.state.GetState()
 }
 
-// GetStatus retrieves the current execution status of the job.
+// GetStatus retrieves the job's current execution status.
 //
 // Returns:
-// - The current job status as a `domain.JobStatus` value.
+//   - Current job status (e.g., Waiting, Running, Completed, etc.).
 func (j *Job) GetStatus() domain.JobStatus {
 	return j.state.GetStatus()
 }
 
-// SetStatus updates the job's execution status.
+// SetStatus explicitly sets the job's execution status.
 //
 // Parameters:
-// - status: The new status to be set.
+//   - status: New job execution status to apply.
 func (j *Job) SetStatus(status domain.JobStatus) {
 	j.state.SetStatus(status)
 }
 
-// TrySetStatus attempts to update the job's status only if the current status is in the allowed list.
+// TrySetStatus attempts to set a new job status if current status matches any allowed states.
 //
 // Parameters:
-// - allowed: A slice of valid statuses that allow the transition.
-// - status: The new status to be set.
+//   - allowed: Slice of allowed current statuses for the transition.
+//   - status: Desired new status.
 //
 // Returns:
-// - true if the status was successfully updated, false otherwise.
+//   - true if the status update was successful; false otherwise.
 func (j *Job) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) bool {
 	return j.state.TrySetStatus(allowed, status)
 }
 
-// UpdateStateWithStrict replaces the current job state with a new state using strict mode.
-//
-// In strict mode, all state fields are overridden.
+// UpdateStateWithStrict replaces the entire current state with the provided state, overwriting all fields.
 //
 // Parameters:
-// - state: The new state values encapsulated in `domain.StateDTO`.
+//   - state: domain.StateDTO containing new state data.
 func (j *Job) UpdateStateWithStrict(state domain.StateDTO) {
 	j.state.Update(state, true)
 }
 
-// UpdateState updates the current job state, modifying only non-empty fields.
+// UpdateState updates the current state, applying only non-zero values from the provided state.
 //
-// This method is useful for incremental updates without overwriting unchanged data.
+// Useful for incremental updates without overwriting unchanged state data.
 //
 // Parameters:
-// - state: The new state values encapsulated in `domain.StateDTO`.
+//   - state: domain.StateDTO containing state updates.
 func (j *Job) UpdateState(state domain.StateDTO) {
 	j.state.Update(state, false)
 }
 
-// ProcessRun checks if the job has exceeded its timeout during execution.
-//
-// Returns:
-// - An error if the execution time surpasses the allowed timeout.
-// - nil if the execution is within limits.
-func (j *Job) ProcessRun() error {
-	execTime := j.state.UpdateExecutionTime()
-	if time.Duration(execTime) > j.Timeout {
-		return errs.New(errs.ErrJobTimout, j.ID)
-	}
-	return nil
-}
-
-// Retry increments the retry counter and checks if the job has exceeded the retry limit.
-//
-// Returns:
-// - An error if the retry limit is reached.
-// - nil if the job is allowed to retry.
-func (j *Job) Retry() error {
-	if j.currentRetry >= int(j.JobDTO.Retry.Count) {
-		return errs.New(errs.ErrJobRetryLimit, j.ID)
-	}
-	j.currentRetry++
-	return nil
-}
-
-// NextRun calculates the exact next scheduled execution time of the job.
-//
-// It supports two scheduling modes:
-// - Cron-based scheduling (if CronExpr is set).
-// - Interval-based scheduling (relative to last start).
-//
-// Returns:
-// - The next scheduled run time as time.Time.
-func (j *Job) NextRun() time.Time {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-
-	// Cron-based schedule
-	if j.cron != nil {
-		return j.cron.NextRun()
-	}
-
-	// Interval-based schedule
-	next := j.state.StartAt.Add(j.Schedule.Interval)
-	if next.Before(time.Now()) {
-		return time.Now()
-	}
-	return next
-}
-
-// CanExecute determines if the job is eligible for execution based on its configuration and timing constraints.
-// It prevents execution if the job is already running, scheduled for a future time, or has expired.
-//
-// The function performs the following checks:
-// 1. Ensures one-time jobs do not execute again after completion.
-// 2. Prevents concurrent execution of the same job.
-// 3. Enforces execution within the allowed time window (StartAt - EndAt).
-// 4. Applies a delay before execution if necessary.
-//
-// Returns:
-//   - true if the job can proceed with execution.
-//   - false if any conditions prevent execution.
-func (j *Job) CanExecute() error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	// Ensure the job is not already running or blocked from execution.
-	if j.GetStatus() != domain.Waiting {
-		return errs.New(errs.ErrJobWrongStatus, j.ID)
-	}
-
-	// Prevent execution before the scheduled start time.
-	if time.Now().Before(j.StartAt) {
-		return errs.New(errs.ErrJobExecTooEarly, j.ID)
-	}
-
-	// Stop execution if the job's allowed execution window has expired.
-	if time.Now().After(j.EndAt) {
-		return errs.New(errs.ErrJobExecAfterEnd, j.ID)
-	}
-
-	return nil
-}
-
-// ProcessStart updates the job state at the beginning of execution.
-func (j *Job) ProcessStart() {
-	startTime := time.Now()
+// SaveUserDataToState transfers stored user data from FnControl to the job state,
+// making it available for external monitoring or reporting purposes.
+func (j *Job) SaveUserDataToState() {
+	result := make(map[string]interface{})
+	j.ctrl.data.Range(func(key, value interface{}) bool {
+		result[key.(string)] = value
+		return true
+	})
 	j.UpdateState(domain.StateDTO{
-		StartAt:       startTime,
-		EndAt:         time.Time{},
-		Status:        domain.Running,
-		ExecutionTime: 0,
-		Data:          map[string]interface{}{},
+		Data: result,
 	})
 }
 
-// ProcessEnd updates the job state at the end of execution, based on the final status and error.
-func (j *Job) ProcessEnd(status domain.JobStatus, err error) {
-	j.state.SetEndState(j.JobDTO.Retry.ResetOnSuccess, status, err)
+// SaveMetrics records job execution metrics using the provided Monitoring interface.
+//
+// This method ensures job-specific data is saved to the state and then passed to the monitoring system.
+//
+// Parameters:
+//   - mon: Monitoring interface responsible for persisting job metrics.
+func (j *Job) SaveMetrics(mon domain.Monitoring) {
+	j.SaveUserDataToState()
+	state := j.GetState()
+	mon.SaveMetrics(state)
 }

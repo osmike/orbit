@@ -2,6 +2,17 @@ package domain
 
 import "time"
 
+// JobStatus represents the current execution state of a job within the scheduler.
+//
+// It is used to track and manage the lifecycle and transitions of scheduled tasks.
+// Possible values include:
+// - Waiting:   The job is waiting to be executed.
+// - Running:   The job is currently executing.
+// - Completed: The job has finished execution successfully.
+// - Paused:    The job is temporarily paused.
+// - Stopped:   The job has been explicitly stopped and will not run unless restarted.
+// - Ended:     The job reached its defined end condition (e.g., end time or retry limit).
+// - Error:     The job encountered an error during execution.
 type JobStatus string
 
 const (
@@ -42,12 +53,26 @@ const (
 )
 
 const (
-	DEFAULT_NUM_WORKERS    = 1000
+	// DEFAULT_NUM_WORKERS specifies the default number of concurrent workers
+	// that the scheduler will use to execute jobs concurrently when no explicit limit is provided.
+	// Recommended to adjust according to the workload and system resources.
+	DEFAULT_NUM_WORKERS = 1000
+	// DEFAULT_CHECK_INTERVAL sets the default time interval between consecutive job state checks in the scheduler.
+	// The scheduler evaluates job statuses and conditions every interval defined by this constant.
+	// A shorter interval provides faster reaction time but can increase CPU usage.
 	DEFAULT_CHECK_INTERVAL = 100 * time.Millisecond
-	DEFAULT_IDLE_TIMEOUT   = 100 * time.Hour
-	DEFAULT_PAUSE_TIMEOUT  = 1 * time.Second
+	// DEFAULT_IDLE_TIMEOUT specifies the default duration after which an idle job (not running or scheduled to run soon)
+	// will be considered inactive or ready for removal.
+	// This timeout prevents resource leaks by removing or disabling long-idle jobs.
+	DEFAULT_IDLE_TIMEOUT = 100 * time.Hour
+	// DEFAULT_PAUSE_TIMEOUT is the default timeout applied when pausing a job without an explicitly provided duration.
+	// It determines how long a job will remain paused before automatically resuming execution.
+	DEFAULT_PAUSE_TIMEOUT = 1 * time.Second
 )
 
 var (
+	// MAX_END_AT represents the maximum allowable date-time for job scheduling.
+	// It serves as a predefined maximum execution boundary, allowing tasks to run indefinitely
+	// unless explicitly set otherwise. Used to avoid zero-value date confusion or invalid scheduling intervals.
 	MAX_END_AT = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 )

@@ -8,42 +8,109 @@ import (
 	"time"
 )
 
+// Job represents an executable task managed by the scheduler.
+// It encapsulates lifecycle management methods, status updates, execution logic, and retry mechanisms.
+//
+// Each Job implementation must provide thread-safe access to internal state and logic,
+// ensuring safe concurrent interactions within the Pool environment.
 type Job interface {
+	// GetMetadata returns the job's configuration metadata.
 	GetMetadata() domain.JobDTO
+
+	// GetStatus returns the current execution status of the job.
 	GetStatus() domain.JobStatus
+
+	// UpdateStateWithStrict fully replaces the current state of the job.
 	UpdateStateWithStrict(state domain.StateDTO)
+
+	// UpdateState partially updates the job's state with non-zero fields from the provided DTO.
 	UpdateState(state domain.StateDTO)
+
+	// NextRun calculates and returns the next scheduled execution time for the job.
 	NextRun() time.Time
-	ProcessStart()
-	ProcessRun() error
-	ProcessEnd(status domain.JobStatus, err error)
+
+	// ProcessStart marks the job's state as "Running", initializing execution metrics and metadata.
+	ProcessStart(mon domain.Monitoring)
+
+	// ProcessRun monitors the job during execution, checking for timeout conditions.
+	// Returns ErrJobTimeout if the job exceeds its configured timeout.
+	ProcessRun(mon domain.Monitoring) error
+
+	// ProcessEnd finalizes the job state after execution completes, recording metrics and handling errors.
+	ProcessEnd(status domain.JobStatus, err error, mon domain.Monitoring)
+
+	// CanExecute checks if the job meets conditions required to start execution immediately.
+	// Returns an error indicating why execution is not allowed, or nil if eligible.
 	CanExecute() error
+
+	// Retry increments the retry count and determines if the job can attempt another execution after failure.
 	Retry() error
+
+	// Execute performs the job's main execution logic, handling internal lifecycle hooks and error handling.
 	Execute() error
+
+	// Stop forcibly stops job execution and updates its state accordingly.
 	Stop()
+
+	// Pause attempts to pause job execution with a specified timeout.
 	Pause(timeout time.Duration) error
+
+	// Resume resumes execution of a paused job, if applicable.
 	Resume() error
 }
 
-type JobData sync.Map
-
+// Pool manages scheduling, execution, lifecycle control, and concurrency of multiple jobs.
+//
+// Pool utilizes a background worker loop, controlled by context cancellation,
+// to continuously check and execute jobs based on their defined schedules and states.
 type Pool struct {
-	domain.Pool
-	jobs   sync.Map
-	Ctx    context.Context
-	cancel context.CancelFunc
-	mon    domain.Monitoring
+	domain.Pool                    // Configuration settings (max workers, check intervals, idle timeouts).
+	jobs        sync.Map           // Concurrent-safe storage of active jobs.
+	Ctx         context.Context    // Execution context for the scheduler pool.
+	cancel      context.CancelFunc // Context cancellation function to gracefully stop the scheduler.
+	mon         domain.Monitoring  // Monitoring implementation for capturing execution metrics.
 }
 
+// Init initializes and configures a new Pool instance with provided settings.
+//
+// It sets default values for configuration parameters if they are not explicitly defined.
+//
+// Parameters:
+//   - ctx: Parent context for cancellation and graceful shutdown control.
+//   - cfg: Pool configuration specifying worker limits, intervals, and timeouts.
+//   - mon: Monitoring implementation for capturing job execution metrics.
+//
+// Returns:
+//   - A fully initialized Pool instance ready for execution.
 func (p *Pool) Init(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) *Pool {
 	pool := &Pool{}
-	p.Ctx, p.cancel = context.WithCancel(ctx)
+	pool.Ctx, pool.cancel = context.WithCancel(ctx)
+
+	if cfg.MaxWorkers == 0 {
+		cfg.MaxWorkers = domain.DEFAULT_NUM_WORKERS
+	}
+	if cfg.CheckInterval == 0 {
+		cfg.CheckInterval = domain.DEFAULT_CHECK_INTERVAL
+	}
+	if cfg.IdleTimeout == 0 {
+		cfg.IdleTimeout = domain.DEFAULT_IDLE_TIMEOUT
+	}
+
 	pool.Pool = cfg
 	pool.mon = mon
+
 	return pool
 }
 
-func (p *Pool) GetJobByID(id string) (Job, error) {
+// getJobByID retrieves a job instance by its unique identifier.
+//
+// Parameters:
+//   - id: Unique identifier of the job.
+//
+// Returns:
+//   - The Job instance matching the provided ID.
+//   - An error (ErrJobNotFound) if the job is not present in the pool.
+func (p *Pool) getJobByID(id string) (Job, error) {
 	jobInterface, ok := p.jobs.Load(id)
 	if !ok {
 		return nil, errs.New(errs.ErrJobNotFound, id)
@@ -51,33 +118,42 @@ func (p *Pool) GetJobByID(id string) (Job, error) {
 	return jobInterface.(Job), nil
 }
 
+// Run initiates the scheduler's main execution loop, periodically checking and managing jobs based on their states.
+//
+// Execution flow:
+//   - Runs continuously until the Pool's context is canceled.
+//   - Checks job states at regular intervals defined by CheckInterval.
+//   - Manages job lifecycle transitions (waiting, running, completed, error).
+//   - Controls concurrency using a semaphore to enforce MaxWorkers limits.
+//   - Ensures graceful shutdown by waiting for all active jobs to complete upon cancellation.
 func (p *Pool) Run() {
 	ticker := time.NewTicker(p.CheckInterval)
 	defer ticker.Stop()
+
 	sem := make(chan struct{}, p.MaxWorkers)
-	var wg *sync.WaitGroup
+	var wg sync.WaitGroup
+
 	for {
 		select {
-		case <-p.Ctx.Done(): // Handle graceful shutdown
-			wg.Wait()
+		case <-p.Ctx.Done(): // Graceful shutdown handling.
+			wg.Wait() // Wait for all active jobs to finish.
 			return
-		case <-ticker.C: // Periodically process jobs
+
+		case <-ticker.C: // Periodic job processing.
 			p.jobs.Range(func(key, value any) bool {
 				job := value.(Job)
 				switch job.GetStatus() {
 				case domain.Waiting:
-					p.processWaiting(job, sem, wg)
+					p.processWaiting(job, sem, &wg)
 				case domain.Running:
 					p.processRunning(job)
 				case domain.Completed:
 					p.processCompleted(job)
 				case domain.Error:
 					p.processError(job)
-
 				}
 				return true
 			})
 		}
 	}
-
 }
