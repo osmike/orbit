@@ -10,14 +10,14 @@ import (
 //
 // Parameters:
 //   - ctrl: Provides the job function with execution control, context management,
-//     and metadata storage capabilities.
+//     pause/resume signaling, and metadata storage capabilities.
 //
 // Returns:
 //   - An error if the job execution fails; otherwise, nil upon successful completion.
 type Fn func(ctrl FnControl) error
 
 // FnControl provides execution control mechanisms, runtime context,
-// and metadata storage for a job function (Fn).
+// pause/resume signaling, and metadata storage for a job function (Fn).
 //
 // It enables job functions to manage their lifecycle effectively by:
 //   - Accessing the execution context to handle cancellations and timeouts.
@@ -55,14 +55,20 @@ func (ctrl *FnControl) SaveData(data map[string]interface{}) {
 	}
 }
 
+// Context returns the job's execution context, which can be used to monitor
+// cancellation or timeouts due to scheduler shutdown, manual stop, or time limits.
 func (ctrl *FnControl) Context() context.Context {
 	return ctrl.ctx
 }
 
+// PauseChan returns the channel used to signal that the job should pause.
+// The job function should monitor this channel and suspend processing when a signal is received.
 func (ctrl *FnControl) PauseChan() chan struct{} {
 	return ctrl.pauseChan
 }
 
+// ResumeChan returns the channel used to signal that a paused job should resume execution.
+// The job should monitor this channel and continue execution when a signal is received.
 func (ctrl *FnControl) ResumeChan() chan struct{} {
 	return ctrl.resumeChan
 }
