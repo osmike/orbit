@@ -7,17 +7,16 @@ import (
 )
 
 // Pause attempts to pause the currently running job by sending a pause signal via pauseCh.
-// The job's main execution logic should explicitly handle this pause signal by reading from pauseCh.
-// If the job does not handle the pause signal within the specified timeout, it is assumed that
-// the job does not support pause functionality, and the status is reverted back to Running.
+// It waits for the job to acknowledge the pause by checking if the status remains "Paused".
+// If the job does not handle the pause signal within the given timeout, the status is reverted back to "Running".
 //
 // Parameters:
-//   - timeout: Duration to wait for the job to acknowledge and process the pause signal.
-//     If zero, the default timeout of 1 second is used.
+//   - timeout: Duration to wait for the job to acknowledge the pause.
+//     If zero, a default timeout is used.
 //
 // Returns:
-//   - An error if the job is not in the Running state, is already paused,
-//     or fails to handle the pause within the specified timeout.
+//   - An error if the job is not in the Running state,
+//     or if the pause is not acknowledged within the timeout.
 func (j *Job) Pause(timeout time.Duration) error {
 	if !j.TrySetStatus([]domain.JobStatus{domain.Running}, domain.Paused) {
 		return errs.New(errs.ErrJobNotRunning, j.ID)
@@ -27,19 +26,31 @@ func (j *Job) Pause(timeout time.Duration) error {
 		timeout = domain.DEFAULT_PAUSE_TIMEOUT
 	}
 
+	// Try to send pause signal without blocking
 	select {
 	case j.pauseCh <- struct{}{}:
-		select {
-		case <-time.After(timeout):
-			<-j.pauseCh
-			j.TrySetStatus([]domain.JobStatus{domain.Paused}, domain.Running)
-			return errs.New(errs.ErrJobPaused, "pause timeout exceeded, job did not handle pause signal")
-		default:
-			return j.runHook(j.Hooks.OnPause, errs.ErrOnPauseHook)
-		}
+		// Sent pause signal, wait for the job to process it
+	case <-time.After(timeout):
+		// Could not send signal, treat as already paused/busy
+		j.SetStatus(domain.Running)
+		return errs.New(errs.ErrJobPaused, "pause signal channel busy or blocked")
 	default:
+		// pauseCh is already full (unprocessed pause), reject pause attempt
+		j.SetStatus(domain.Running)
 		return errs.New(errs.ErrJobPaused, j.ID)
 	}
+
+	// Wait for job to process pause
+	time.Sleep(timeout)
+
+	// If job didn't stay in Paused — revert
+	if j.GetStatus() != domain.Paused {
+		j.SetStatus(domain.Running)
+		return errs.New(errs.ErrJobPaused, "pause timeout exceeded, job did not handle pause signal")
+	}
+
+	// Run hook if provided
+	return j.runHook(j.Hooks.OnPause, errs.ErrOnPauseHook)
 }
 
 // Resume sends a resume signal to a paused or stopped job, allowing it to continue execution.
