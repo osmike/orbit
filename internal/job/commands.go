@@ -25,29 +25,33 @@ func (j *Job) Pause(timeout time.Duration) error {
 	if timeout == 0 {
 		timeout = domain.DEFAULT_PAUSE_TIMEOUT
 	}
+	j.paused.Store(true)
+	go func() {
+		time.Sleep(timeout)
+		if !j.pauseChecked.Load() {
+			j.TrySetStatus([]domain.JobStatus{domain.Paused}, domain.Running)
+			j.paused.Store(true)
+		}
+		j.pauseChecked.Store(false)
+	}()
 
-	// Try to send pause signal without blocking
-	select {
-	case j.pauseCh <- struct{}{}:
-		// Sent pause signal, wait for the job to process it
-	case <-time.After(timeout):
-		// Could not send signal, treat as already paused/busy
-		j.SetStatus(domain.Running)
-		return errs.New(errs.ErrJobPaused, "pause signal channel busy or blocked")
-	default:
-		// pauseCh is already full (unprocessed pause), reject pause attempt
-		j.SetStatus(domain.Running)
-		return errs.New(errs.ErrJobPaused, j.ID)
-	}
-
-	// Wait for job to process pause
-	time.Sleep(timeout)
-
-	// If job didn't stay in Paused — revert
-	if j.GetStatus() != domain.Paused {
-		j.SetStatus(domain.Running)
-		return errs.New(errs.ErrJobPaused, "pause timeout exceeded, job did not handle pause signal")
-	}
+	//// Try to send pause signal without blocking
+	//select {
+	//case j.pauseCh <- struct{}{}:
+	//	go func() {
+	//		time.Sleep(timeout)
+	//		select {
+	//		case <-j.pauseCh:
+	//			// If job didn't stay in Paused — revert
+	//			j.TrySetStatus([]domain.JobStatus{domain.Paused}, domain.Running)
+	//		default:
+	//		}
+	//	}()
+	//default:
+	//	// pauseCh is already full (unprocessed pause), reject pause attempt
+	//	j.SetStatus(domain.Running)
+	//	return errs.New(errs.ErrJobPaused, j.ID)
+	//}
 
 	// Run hook if provided
 	return j.runHook(j.Hooks.OnPause, errs.ErrOnPauseHook)
@@ -61,14 +65,18 @@ func (j *Job) Pause(timeout time.Duration) error {
 // Returns:
 //   - An error if the job is not currently paused or stopped, or if resumption fails.
 func (j *Job) Resume() error {
+	defer func() {
+		j.paused.Store(false)
+	}()
 	switch j.GetStatus() {
 	case domain.Paused:
-		select {
-		case j.resumeCh <- struct{}{}:
-			return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook)
-		default:
-			return errs.New(errs.ErrJobWrongStatus, "failed to send resume signal")
-		}
+		//select {
+		//case j.resumeCh <- struct{}{}:
+		//	return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook)
+		//default:
+		//	return errs.New(errs.ErrJobWrongStatus, "failed to send resume signal")
+		//}
+		return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook)
 	case domain.Stopped:
 		j.SetStatus(domain.Waiting)
 		return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook)

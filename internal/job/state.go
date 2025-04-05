@@ -133,6 +133,9 @@ func (s *state) Update(state domain.StateDTO, strict bool) {
 	if state.ExecutionTime > 0 {
 		s.ExecutionTime = state.ExecutionTime
 	}
+	if state.Status != "" {
+		s.Status = state.Status
+	}
 }
 
 // GetState safely retrieves a snapshot of the current state as a StateDTO.

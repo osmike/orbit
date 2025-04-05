@@ -11,6 +11,28 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func newRunningJobWithoutPauseHandler(t *testing.T) *Job {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	j, err := New(domain.JobDTO{
+		ID:   "test-pause-no-handler",
+		Name: "job without pause handler",
+		Schedule: domain.Schedule{
+			Interval: time.Second,
+		},
+		Fn: func(ctrl domain.FnControl) error {
+			select {
+			case <-ctrl.Context().Done():
+				return ctrl.Context().Err()
+			}
+		},
+	}, ctx)
+	assert.NoError(t, err)
+	j.SetStatus(domain.Running)
+	return j
+}
+
 func newRunningJobWithPauseHandler(t *testing.T) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -56,33 +78,63 @@ func TestJob_Pause_AlreadyPaused(t *testing.T) {
 }
 
 func TestJob_Pause_Timeout(t *testing.T) {
-	j := newRunningJobWithPauseHandler(t)
+	j := newRunningJobWithoutPauseHandler(t)
+
 	err := j.Pause(100 * time.Millisecond)
-	<-time.After(1000 * time.Millisecond)
-	assert.ErrorIs(t, err, errs.ErrJobPaused)
+	assert.NoError(t, err) // Pause now never returns error even on timeout
+
+	time.Sleep(200 * time.Millisecond) // allow internal goroutine to revert
+
 	assert.Equal(t, domain.Running, j.GetStatus())
 }
 
 func TestJob_Resume_FromPaused(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	resumed := make(chan struct{})
+
 	j, err := New(domain.JobDTO{
 		ID:   "resume-paused",
-		Name: "resume paused job",
+		Name: "job that handles pause/resume",
 		Schedule: domain.Schedule{
 			Interval: time.Second,
 		},
-		Fn: func(ctrl domain.FnControl) error { return nil },
+		Fn: func(ctrl domain.FnControl) error {
+			for {
+				select {
+				case <-ctrl.PauseChan():
+					select {
+					case <-ctrl.ResumeChan():
+						resumed <- struct{}{}
+						return nil
+					case <-ctrl.Context().Done():
+						return ctrl.Context().Err()
+					}
+				case <-ctrl.Context().Done():
+					return ctrl.Context().Err()
+				}
+			}
+		},
 	}, ctx)
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Paused)
 
 	go func() {
-		<-j.ctrl.ResumeChan()
+		_ = j.Fn(j.ctrl)
 	}()
 
+	time.Sleep(100 * time.Millisecond)
 	err = j.Resume()
 	assert.NoError(t, err)
+
+	select {
+	case <-resumed:
+		assert.True(t, true, "Resume handled successfully")
+	case <-time.After(time.Second):
+		t.Fatal("Timeout waiting for resume handling")
+	}
 }
 
 func TestJob_Resume_FromStopped(t *testing.T) {

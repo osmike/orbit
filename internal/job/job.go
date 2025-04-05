@@ -6,6 +6,7 @@ import (
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,9 +23,13 @@ type Job struct {
 	state *state     // Runtime job execution state (status, errors, execution time).
 	mu    sync.Mutex // Mutex to ensure thread-safe state manipulation.
 
-	pauseCh  chan struct{} // Channel to signal job pause requests.
-	resumeCh chan struct{} // Channel to signal job resume requests.
-	doneCh   chan struct{} // Channel signaling completion of job execution.
+	pauseCh  chan struct{} // Channel to signal job pause requests. !!! Deprecated
+	resumeCh chan struct{} // Channel to signal job resume requests. !!! Deprecated
+
+	paused       atomic.Bool
+	pauseChecked atomic.Bool
+
+	doneCh chan struct{} // Channel signaling completion of job execution.
 
 	cron *CronSchedule // Parsed cron schedule if job is cron-based.
 
