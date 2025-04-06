@@ -18,8 +18,8 @@ func newRunningJobWithoutPauseHandler(t *testing.T) *Job {
 	j, err := New(domain.JobDTO{
 		ID:   "test-pause-no-handler",
 		Name: "job without pause handler",
-		Schedule: domain.Schedule{
-			Interval: time.Second,
+		Interval: domain.Interval{
+			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error {
 			select {
@@ -40,8 +40,8 @@ func newRunningJobWithPauseHandler(t *testing.T) *Job {
 	j, err := New(domain.JobDTO{
 		ID:   "test-pause",
 		Name: "pause handler job",
-		Schedule: domain.Schedule{
-			Interval: time.Second,
+		Interval: domain.Interval{
+			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error {
 			select {
@@ -97,20 +97,16 @@ func TestJob_Resume_FromPaused(t *testing.T) {
 	j, err := New(domain.JobDTO{
 		ID:   "resume-paused",
 		Name: "job that handles pause/resume",
-		Schedule: domain.Schedule{
-			Interval: time.Second,
+		Interval: domain.Interval{
+			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error {
 			for {
 				select {
 				case <-ctrl.PauseChan():
-					select {
-					case <-ctrl.ResumeChan():
-						resumed <- struct{}{}
-						return nil
-					case <-ctrl.Context().Done():
-						return ctrl.Context().Err()
-					}
+					<-ctrl.ResumeChan()
+					resumed <- struct{}{}
+					return nil
 				case <-ctrl.Context().Done():
 					return ctrl.Context().Err()
 				}
@@ -119,7 +115,8 @@ func TestJob_Resume_FromPaused(t *testing.T) {
 	}, ctx)
 	assert.NoError(t, err)
 
-	j.SetStatus(domain.Paused)
+	j.SetStatus(domain.Running)
+	err = j.Pause(300 * time.Millisecond)
 
 	go func() {
 		_ = j.Fn(j.ctrl)
@@ -142,8 +139,8 @@ func TestJob_Resume_FromStopped(t *testing.T) {
 	j, err := New(domain.JobDTO{
 		ID:   "resume-stopped",
 		Name: "resume stopped job",
-		Schedule: domain.Schedule{
-			Interval: time.Second,
+		Interval: domain.Interval{
+			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
 	}, ctx)
@@ -160,8 +157,8 @@ func TestJob_Resume_FromInvalidState(t *testing.T) {
 	j, err := New(domain.JobDTO{
 		ID:   "resume-invalid",
 		Name: "resume invalid state job",
-		Schedule: domain.Schedule{
-			Interval: time.Second,
+		Interval: domain.Interval{
+			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
 	}, ctx)
@@ -177,8 +174,8 @@ func TestJob_Stop_Transitions(t *testing.T) {
 	j, err := New(domain.JobDTO{
 		ID:   "stop-running",
 		Name: "stop transition job",
-		Schedule: domain.Schedule{
-			Interval: time.Second,
+		Interval: domain.Interval{
+			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
 	}, ctx)
@@ -199,8 +196,8 @@ func TestJob_Stop_WithHook(t *testing.T) {
 	j, err := New(domain.JobDTO{
 		ID:   "stop-hook",
 		Name: "job with stop hook",
-		Schedule: domain.Schedule{
-			Interval: time.Second,
+		Interval: domain.Interval{
+			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
 		Hooks: domain.Hooks{

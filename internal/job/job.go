@@ -6,7 +6,6 @@ import (
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -23,11 +22,8 @@ type Job struct {
 	state *state     // Runtime job execution state (status, errors, execution time).
 	mu    sync.Mutex // Mutex to ensure thread-safe state manipulation.
 
-	pauseCh  chan struct{} // Channel to signal job pause requests. !!! Deprecated
-	resumeCh chan struct{} // Channel to signal job resume requests. !!! Deprecated
-
-	paused       atomic.Bool
-	pauseChecked atomic.Bool
+	pauseCh  chan struct{} // Channel to signal job pause requests.
+	resumeCh chan struct{} // Channel to signal job resume requests.
 
 	doneCh chan struct{} // Channel signaling completion of job execution.
 
@@ -72,12 +68,12 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 		job.Name = job.ID
 	}
 
-	if job.Schedule.CronExpr != "" && job.Schedule.Interval > 0 {
+	if job.Interval.CronExpr != "" && job.Interval.Time > 0 {
 		return nil, errs.New(errs.ErrMixedScheduleType, job.ID)
 	}
 
-	if job.Schedule.CronExpr != "" {
-		cron, err := ParseCron(job.Schedule.CronExpr)
+	if job.Interval.CronExpr != "" {
+		cron, err := ParseCron(job.Interval.CronExpr)
 		if err != nil {
 			return nil, errs.New(errs.ErrInvalidCronExpression, fmt.Sprintf("error - %v, id: %s", err, job.ID))
 		}
@@ -100,6 +96,7 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	job.pauseCh = make(chan struct{}, 1)
 	job.resumeCh = make(chan struct{}, 1)
 	job.doneCh = make(chan struct{}, 1)
+	job.doneCh <- struct{}{}
 
 	job.ctrl = &FnControl{
 		ctx:        job.ctx,
@@ -155,14 +152,6 @@ func (j *Job) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) 
 	return j.state.TrySetStatus(allowed, status)
 }
 
-// UpdateStateWithStrict replaces the entire current state with the provided state, overwriting all fields.
-//
-// Parameters:
-//   - state: domain.StateDTO containing new state data.
-func (j *Job) UpdateStateWithStrict(state domain.StateDTO) {
-	j.state.Update(state, true)
-}
-
 // UpdateState updates the current state, applying only non-zero values from the provided state.
 //
 // Useful for incremental updates without overwriting unchanged state data.
@@ -170,7 +159,7 @@ func (j *Job) UpdateStateWithStrict(state domain.StateDTO) {
 // Parameters:
 //   - state: domain.StateDTO containing state updates.
 func (j *Job) UpdateState(state domain.StateDTO) {
-	j.state.Update(state, false)
+	j.state.Update(state)
 }
 
 // SaveUserDataToState transfers stored user data from FnControl to the job state,

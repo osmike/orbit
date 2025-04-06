@@ -12,12 +12,12 @@ import (
 //
 // It tracks runtime details, including timestamps, current status,
 // execution duration, errors, custom metadata, and retry attempts.
-// Access to all state fields is synchronized via an internal mutex
+// Access to all state fields is synchronized via an internal read/write mutex
 // to ensure thread safety.
 type state struct {
 	domain.StateDTO
 
-	mu sync.Mutex // Protects state fields from concurrent access.
+	mu sync.RWMutex // Protects state fields from concurrent access.
 
 	// currentRetry tracks the number of retry attempts made for the job.
 	currentRetry int64
@@ -56,8 +56,8 @@ func (s *state) SetStatus(status domain.JobStatus) {
 // Returns:
 //   - The current job execution status.
 func (s *state) GetStatus() domain.JobStatus {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.Status
 }
 
@@ -105,18 +105,9 @@ func (s *state) UpdateExecutionTime() int64 {
 // Parameters:
 //   - state: StateDTO with new values to apply.
 //   - strict: If true, applies all fields; otherwise, only non-zero fields.
-func (s *state) Update(state domain.StateDTO, strict bool) {
+func (s *state) Update(state domain.StateDTO) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if strict {
-		s.EndAt = state.EndAt
-		s.StartAt = state.StartAt
-		s.Data = state.Data
-		s.Error = state.Error
-		s.ExecutionTime = state.ExecutionTime
-		return
-	}
 
 	if state.Error != nil {
 		s.Error = state.Error
@@ -144,8 +135,8 @@ func (s *state) Update(state domain.StateDTO, strict bool) {
 //   - A copy of the current state containing execution details, timestamps, errors,
 //     execution status, and metadata.
 func (s *state) GetState() domain.StateDTO {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	return domain.StateDTO{
 		JobID:         s.JobID,
@@ -178,10 +169,12 @@ func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err erro
 	s.EndAt = time.Now()
 	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
 
-	if !s.TrySetStatus([]domain.JobStatus{domain.Running, domain.Waiting}, status) {
+	if !(s.Status == domain.Running || s.Status == domain.Waiting) {
 		s.Status = domain.Error
 		s.Error = errs.New(errs.ErrJobWrongStatus, fmt.Sprintf("wrong status transition from %s to %s", s.Status, status))
+		return
 	}
+	s.Status = status
 
 	if s.Error != nil && resOnSuccess && err == nil {
 		s.currentRetry = 0

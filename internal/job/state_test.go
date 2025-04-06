@@ -1,0 +1,120 @@
+package job
+
+import (
+	"errors"
+	"go-scheduler/internal/domain"
+	errs "go-scheduler/internal/error"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestState_Init(t *testing.T) {
+	s := (&state{}).Init("job-123")
+	assert.Equal(t, "job-123", s.JobID)
+	assert.Equal(t, domain.Waiting, s.Status)
+	assert.NotNil(t, s.Data)
+}
+
+func TestState_SetAndGetStatus(t *testing.T) {
+	s := (&state{}).Init("job-1")
+	s.SetStatus(domain.Running)
+	assert.Equal(t, domain.Running, s.GetStatus())
+}
+
+func TestState_TrySetStatus(t *testing.T) {
+	s := (&state{}).Init("job-1")
+
+	s.SetStatus(domain.Waiting)
+	ok := s.TrySetStatus([]domain.JobStatus{domain.Waiting}, domain.Running)
+	assert.True(t, ok)
+	assert.Equal(t, domain.Running, s.GetStatus())
+
+	fail := s.TrySetStatus([]domain.JobStatus{domain.Waiting}, domain.Completed)
+	assert.False(t, fail)
+	assert.Equal(t, domain.Running, s.GetStatus())
+}
+
+func TestState_UpdateExecutionTime(t *testing.T) {
+	s := (&state{}).Init("job-1")
+	s.StartAt = time.Now()
+
+	time.Sleep(5 * time.Millisecond)
+	et := s.UpdateExecutionTime()
+
+	assert.Greater(t, et, int64(0))
+	assert.Equal(t, et, s.GetState().ExecutionTime)
+}
+
+func TestState_Update(t *testing.T) {
+	s := (&state{}).Init("job-1")
+
+	now := time.Now()
+	newState := domain.StateDTO{
+		StartAt:       now,
+		EndAt:         now.Add(1 * time.Second),
+		Status:        domain.Completed,
+		Error:         errors.New("fail"),
+		ExecutionTime: 1000,
+		Data: map[string]interface{}{
+			"key": "val",
+		},
+	}
+
+	s.Update(newState)
+	stored := s.GetState()
+	assert.Equal(t, domain.Completed, stored.Status)
+	assert.Equal(t, "fail", stored.Error.Error())
+	assert.Equal(t, "val", stored.Data["key"])
+	assert.Equal(t, int64(1000), stored.ExecutionTime)
+}
+
+func TestState_GetState(t *testing.T) {
+	s := (&state{}).Init("job-1")
+	s.SetStatus(domain.Running)
+	st := s.GetState()
+	assert.Equal(t, domain.Running, st.Status)
+	assert.Equal(t, "job-1", st.JobID)
+}
+
+func TestState_SetEndState_Valid(t *testing.T) {
+	s := (&state{}).Init("job-1")
+	s.SetStatus(domain.Running)
+	s.StartAt = time.Now()
+
+	time.Sleep(20 * time.Millisecond)
+
+	s.SetEndState(true, domain.Completed, nil)
+	time.Sleep(20 * time.Millisecond)
+	state := s.GetState()
+
+	assert.Equal(t, domain.Completed, state.Status)
+	assert.True(t, state.EndAt.Before(time.Now()))
+	assert.True(t, state.ExecutionTime > 0)
+	assert.Nil(t, state.Error)
+}
+
+func TestState_SetEndState_InvalidTransition(t *testing.T) {
+	s := (&state{}).Init("job-1")
+	s.SetStatus(domain.Completed) // illegal transition
+	s.StartAt = time.Now()
+
+	s.SetEndState(true, domain.Completed, nil)
+
+	state := s.GetState()
+	assert.Equal(t, domain.Error, state.Status)
+	assert.ErrorIs(t, state.Error, errs.ErrJobWrongStatus)
+}
+
+func TestState_SetEndState_ResetsRetry(t *testing.T) {
+	s := (&state{}).Init("job-1")
+	s.SetStatus(domain.Running)
+	s.StartAt = time.Now()
+
+	s.Error = errors.New("fail")
+	s.currentRetry = 3
+	s.SetEndState(true, domain.Completed, nil)
+
+	assert.Equal(t, int64(0), s.currentRetry)
+}

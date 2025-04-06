@@ -3,7 +3,6 @@ package job
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 )
 
 // Fn defines the signature of functions executed by the scheduler.
@@ -38,9 +37,6 @@ type FnControl struct {
 	// function receives a message on this channel, it can safely resume processing.
 	resumeChan chan struct{}
 
-	pauseChecked *atomic.Bool
-	paused       *atomic.Bool
-
 	// data stores custom key-value metadata generated or used by the job during execution.
 	// This is useful for persisting execution state, debugging, logging, or reporting metrics.
 	data *sync.Map
@@ -65,19 +61,25 @@ func (ctrl *FnControl) Context() context.Context {
 	return ctrl.ctx
 }
 
-func (ctrl *FnControl) IsPaused() bool {
-	ctrl.pauseChecked.Store(true)
-	return ctrl.paused.Load()
-}
-
 // PauseChan returns the channel used to signal that the job should pause.
 // The job function should monitor this channel and suspend processing when a signal is received.
-func (ctrl *FnControl) PauseChan() chan struct{} {
+func (ctrl *FnControl) PauseChan() <-chan struct{} {
 	return ctrl.pauseChan
 }
 
 // ResumeChan returns the channel used to signal that a paused job should resume execution.
 // The job should monitor this channel and continue execution when a signal is received.
-func (ctrl *FnControl) ResumeChan() chan struct{} {
-	return ctrl.resumeChan
+func (ctrl *FnControl) ResumeChan() <-chan struct{} {
+	out := make(chan struct{})
+
+	go func() {
+		select {
+		case <-ctrl.resumeChan:
+			out <- struct{}{}
+		case <-ctrl.ctx.Done():
+			close(out)
+		}
+	}()
+
+	return out
 }

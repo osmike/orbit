@@ -39,7 +39,7 @@ func (j *Job) CanExecute() error {
 //
 // Scheduling modes supported:
 //   - Cron-based: calculates the next execution time based on a cron expression.
-//   - Interval-based: calculates the next execution time based on a fixed interval from the last execution.
+//   - Time-based: calculates the next execution time based on a fixed interval from the last execution.
 //
 // Returns:
 //   - The next scheduled execution time as a time.Time instance.
@@ -52,7 +52,7 @@ func (j *Job) NextRun() time.Time {
 		return j.cron.NextRun()
 	}
 
-	next := j.state.StartAt.Add(j.Schedule.Interval)
+	next := j.state.StartAt.Add(j.Interval.Time)
 	if next.Before(time.Now()) {
 		return time.Now()
 	}
