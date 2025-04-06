@@ -49,7 +49,7 @@ type JobDTO struct {
 
 	// Interval defines the time duration between consecutive executions of the job.
 	// If set to 0, the job will run only once.
-	Schedule Schedule
+	Interval Interval
 
 	// Timeout is the maximum allowed execution time for the job.
 	// If the job exceeds this duration, it will be forcibly stopped.

@@ -21,11 +21,11 @@ type FnControl interface {
 
 	// PauseChan returns a channel that is used to signal when the job should pause.
 	// The job implementation is expected to read from this channel and enter a paused state when needed.
-	PauseChan() chan struct{}
+	PauseChan() <-chan struct{}
 
 	// ResumeChan returns a channel that signals when a paused job should resume execution.
 	// The job should wait on this channel to continue processing after a pause.
-	ResumeChan() chan struct{}
+	ResumeChan() <-chan struct{}
 }
 
 // Fn represents the main function executed as a scheduled job by the scheduler.

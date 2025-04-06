@@ -13,7 +13,7 @@ import (
 // Parameters:
 //   - MaxWorkers: Maximum number of concurrent workers to execute jobs.
 //     Default is 1000 if set to 0.
-//   - CheckInterval: Interval at which the scheduler checks for jobs to execute.
+//   - CheckInterval: Time at which the scheduler checks for jobs to execute.
 //     Default is 100ms if set to 0.
 //   - IdleTimeout: Duration after which idle workers may be terminated.
 //     Default is 100 hours if set to 0.
@@ -45,20 +45,20 @@ type JobConfig struct {
 	*domain.JobDTO
 }
 
-// SchedulerConfig encapsulates job scheduling settings.
+// IntervalConfig encapsulates job scheduling settings.
 //
 // Parameters:
-//   - Interval: Time between job executions (set 0 if using cron expression).
+//   - Time: Time between job executions (set 0 if using cron expression).
 //   - CronExpr: Cron expression defining job execution schedule (leave empty if using interval).
-type SchedulerConfig struct {
-	*domain.Schedule
+type IntervalConfig struct {
+	*domain.Interval
 }
 
 // RetryConfig defines retry behavior for a job.
 //
 // Parameters:
 //   - Count: Number of allowed retries after execution failure.
-//   - Interval: Time interval between retries.
+//   - Time: Time interval between retries.
 //   - ResetOnSuccess: Flag to reset retries count after successful job execution.
 type RetryConfig struct {
 	*domain.Retry

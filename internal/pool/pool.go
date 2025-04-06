@@ -20,9 +20,6 @@ type Job interface {
 	// GetStatus returns the current execution status of the job.
 	GetStatus() domain.JobStatus
 
-	// UpdateStateWithStrict fully replaces the current state of the job.
-	UpdateStateWithStrict(state domain.StateDTO)
-
 	// UpdateState partially updates the job's state with non-zero fields from the provided DTO.
 	UpdateState(state domain.StateDTO)
 
