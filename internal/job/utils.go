@@ -53,9 +53,7 @@ func (j *Job) NextRun() time.Time {
 	}
 
 	next := j.state.StartAt.Add(j.Interval.Time)
-	if next.Before(time.Now()) {
-		return time.Now()
-	}
+
 	return next
 }
 
@@ -70,9 +68,28 @@ func (j *Job) Retry() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	if j.currentRetry >= int(j.JobDTO.Retry.Count) {
+	if !j.JobDTO.Retry.Active {
+		return errs.New(errs.ErrRetryFlagNotActive, j.ID)
+	}
+
+	if j.JobDTO.Retry.Count == 0 {
+		return nil
+	}
+
+	if j.state.currentRetry >= j.JobDTO.Retry.Count {
 		return errs.New(errs.ErrJobRetryLimit, j.ID)
 	}
-	j.currentRetry++
+	j.state.currentRetry++
 	return nil
+}
+
+func (j *Job) CloseChannels() {
+	defer func() { // closing channels with recover
+		recover()
+		j.cancel()
+	}()
+	close(j.processCh)
+	close(j.doneCh)
+	close(j.resumeCh)
+	close(j.pauseCh)
 }

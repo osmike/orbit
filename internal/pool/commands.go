@@ -20,11 +20,15 @@ import (
 //   - nil if the job is successfully added to the pool.
 func (p *Pool) AddJob(job Job) error {
 	meta := job.GetMetadata()
+
 	if _, ok := p.jobs.Load(meta.ID); ok {
 		return errs.New(errs.ErrIDExists, meta.ID)
 	}
 	if job.GetStatus() != domain.Waiting {
 		return errs.New(errs.ErrJobWrongStatus, meta.ID)
+	}
+	if meta.Timeout == 0 {
+		job.SetTimeout(p.IdleTimeout)
 	}
 	p.jobs.Store(meta.ID, job)
 	return nil
@@ -107,16 +111,16 @@ func (p *Pool) StopJob(id string) error {
 	if err != nil {
 		return err
 	}
-	job.Stop()
-	return nil
+
+	return job.Stop()
 }
 
-// Stop terminates execution of all jobs within the scheduler pool immediately.
+// Kill terminates execution of all jobs within the scheduler pool immediately.
 //
 // This method cancels the execution context of the entire pool, causing all running,
 // waiting, and scheduled jobs to be stopped.
 //
 // Use this method with caution, as it impacts all jobs managed by the pool.
-func (p *Pool) Stop() {
+func (p *Pool) Kill() {
 	p.cancel()
 }

@@ -11,20 +11,20 @@ import (
 )
 
 func TestState_Init(t *testing.T) {
-	s := (&state{}).Init("job-123")
+	s := newState("job-123")
 	assert.Equal(t, "job-123", s.JobID)
 	assert.Equal(t, domain.Waiting, s.Status)
 	assert.NotNil(t, s.Data)
 }
 
 func TestState_SetAndGetStatus(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 	s.SetStatus(domain.Running)
 	assert.Equal(t, domain.Running, s.GetStatus())
 }
 
 func TestState_TrySetStatus(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 
 	s.SetStatus(domain.Waiting)
 	ok := s.TrySetStatus([]domain.JobStatus{domain.Waiting}, domain.Running)
@@ -37,7 +37,7 @@ func TestState_TrySetStatus(t *testing.T) {
 }
 
 func TestState_UpdateExecutionTime(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 	s.StartAt = time.Now()
 
 	time.Sleep(5 * time.Millisecond)
@@ -48,30 +48,30 @@ func TestState_UpdateExecutionTime(t *testing.T) {
 }
 
 func TestState_Update(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 
 	now := time.Now()
 	newState := domain.StateDTO{
 		StartAt:       now,
 		EndAt:         now.Add(1 * time.Second),
 		Status:        domain.Completed,
-		Error:         errors.New("fail"),
+		Error:         domain.StateError{JobError: errors.New("fail")},
 		ExecutionTime: 1000,
 		Data: map[string]interface{}{
 			"key": "val",
 		},
 	}
 
-	s.Update(newState)
+	s.Update(newState, false)
 	stored := s.GetState()
 	assert.Equal(t, domain.Completed, stored.Status)
-	assert.Equal(t, "fail", stored.Error.Error())
+	assert.Equal(t, "fail", stored.Error.JobError.Error())
 	assert.Equal(t, "val", stored.Data["key"])
 	assert.Equal(t, int64(1000), stored.ExecutionTime)
 }
 
 func TestState_GetState(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 	s.SetStatus(domain.Running)
 	st := s.GetState()
 	assert.Equal(t, domain.Running, st.Status)
@@ -79,7 +79,7 @@ func TestState_GetState(t *testing.T) {
 }
 
 func TestState_SetEndState_Valid(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 	s.SetStatus(domain.Running)
 	s.StartAt = time.Now()
 
@@ -92,11 +92,11 @@ func TestState_SetEndState_Valid(t *testing.T) {
 	assert.Equal(t, domain.Completed, state.Status)
 	assert.True(t, state.EndAt.Before(time.Now()))
 	assert.True(t, state.ExecutionTime > 0)
-	assert.Nil(t, state.Error)
+	assert.True(t, state.Error.IsEmpty())
 }
 
 func TestState_SetEndState_InvalidTransition(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 	s.SetStatus(domain.Completed) // illegal transition
 	s.StartAt = time.Now()
 
@@ -104,15 +104,15 @@ func TestState_SetEndState_InvalidTransition(t *testing.T) {
 
 	state := s.GetState()
 	assert.Equal(t, domain.Error, state.Status)
-	assert.ErrorIs(t, state.Error, errs.ErrJobWrongStatus)
+	assert.ErrorIs(t, state.Error.JobError, errs.ErrJobWrongStatus)
 }
 
 func TestState_SetEndState_ResetsRetry(t *testing.T) {
-	s := (&state{}).Init("job-1")
+	s := newState("job-1")
 	s.SetStatus(domain.Running)
 	s.StartAt = time.Now()
 
-	s.Error = errors.New("fail")
+	s.Error.JobError = errors.New("fail")
 	s.currentRetry = 3
 	s.SetEndState(true, domain.Completed, nil)
 

@@ -8,68 +8,64 @@ import (
 	"time"
 )
 
-// state represents the internal execution state of a job.
+// state represents the internal, thread-safe runtime state of a scheduled job.
 //
-// It tracks runtime details, including timestamps, current status,
-// execution duration, errors, custom metadata, and retry attempts.
-// Access to all state fields is synchronized via an internal read/write mutex
-// to ensure thread safety.
+// It captures and synchronizes key execution metadata, such as start and end timestamps,
+// status, execution time, errors, user-defined data, and retry attempts.
+// This struct is not exposed directly outside the job package.
 type state struct {
-	domain.StateDTO
+	domain.StateDTO // Embedded data transfer object for simplified state export.
 
-	mu sync.RWMutex // Protects state fields from concurrent access.
+	mu sync.RWMutex // Guards all state fields for concurrent access.
 
-	// currentRetry tracks the number of retry attempts made for the job.
-	currentRetry int64
+	currentRetry int64 // Tracks the number of retry attempts made for this job.
 }
 
-// Init initializes and returns a new job execution state.
+// newState initializes and returns a new job execution state instance.
 //
 // Parameters:
-//   - id: The unique identifier of the job.
+//   - id: The unique job identifier to associate with the state.
 //
 // Returns:
-//   - A pointer to a state instance initialized with Waiting status
-//     and an empty metadata map.
-func (s *state) Init(id string) *state {
+//   - A pointer to the initialized state, with default status (Waiting) and empty data map.
+func newState(jobId string) *state {
 	return &state{
 		StateDTO: domain.StateDTO{
-			JobID:  id,
+			JobID:  jobId,
 			Status: domain.Waiting,
 			Data:   make(map[string]interface{}),
 		},
 	}
 }
 
-// SetStatus safely sets the current execution status of the job.
+// SetStatus sets the current job execution status in a thread-safe manner.
 //
 // Parameters:
-//   - status: The new job execution status to set.
+//   - status: The new status to assign to the job (e.g., Running, Error, etc.).
 func (s *state) SetStatus(status domain.JobStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Status = status
 }
 
-// GetStatus safely retrieves the current execution status of the job.
+// GetStatus retrieves the current job execution status in a thread-safe manner.
 //
 // Returns:
-//   - The current job execution status.
+//   - The current job status.
 func (s *state) GetStatus() domain.JobStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Status
 }
 
-// TrySetStatus attempts to update the job's execution status only if its current status
-// matches one of the allowed statuses provided.
+// TrySetStatus attempts to update the job status if its current status matches one of the allowed values.
 //
 // Parameters:
-//   - allowed: Slice of statuses considered valid for transitioning.
+//   - allowed: List of acceptable current statuses for transition.
 //   - status: The desired new status.
 //
 // Returns:
-//   - true if the status update succeeds; false otherwise.
+//   - true if the status was updated successfully; false otherwise.
 func (s *state) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,12 +79,11 @@ func (s *state) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus
 	return false
 }
 
-// UpdateExecutionTime updates and returns the elapsed execution time of the job.
-//
-// It calculates execution duration as the time elapsed since the job started.
+// UpdateExecutionTime recalculates and updates the execution duration
+// as the time elapsed since StartAt, in nanoseconds.
 //
 // Returns:
-//   - Execution duration in nanoseconds.
+//   - The updated execution time.
 func (s *state) UpdateExecutionTime() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -97,19 +92,32 @@ func (s *state) UpdateExecutionTime() int64 {
 	return s.ExecutionTime
 }
 
-// Update modifies the state fields based on provided StateDTO.
+// Update applies the provided StateDTO to the current state.
 //
-// In strict mode, all state fields are overwritten with the provided values.
-// In non-strict mode, only non-zero fields from the provided state are updated.
+// In non-strict mode:
+//   - Only non-zero or non-empty fields from the input will overwrite existing values.
+//
+// In strict mode:
+//   - All fields in the current state will be fully overwritten.
 //
 // Parameters:
-//   - state: StateDTO with new values to apply.
-//   - strict: If true, applies all fields; otherwise, only non-zero fields.
-func (s *state) Update(state domain.StateDTO) {
+//   - state: StateDTO containing updated fields.
+//   - strict: Whether to overwrite all fields unconditionally.
+func (s *state) Update(state domain.StateDTO, strict bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if state.Error != nil {
+	if strict {
+		s.StartAt = state.StartAt
+		s.EndAt = state.EndAt
+		s.Data = state.Data
+		s.ExecutionTime = state.ExecutionTime
+		s.Status = state.Status
+		s.Error = state.Error
+		return
+	}
+
+	if !state.Error.IsEmpty() {
 		s.Error = state.Error
 	}
 	if !state.StartAt.IsZero() {
@@ -127,18 +135,32 @@ func (s *state) Update(state domain.StateDTO) {
 	if state.Status != "" {
 		s.Status = state.Status
 	}
+	if !state.NextRun.IsZero() {
+		s.NextRun = state.NextRun
+	}
+	if state.Success > 0 {
+		s.Success = state.Success
+	}
+	if state.Failure > 0 {
+		s.Failure = state.Failure
+	}
+	if state.Success > 0 {
+		s.Success = state.Success
+	}
+	if state.Failure > 0 {
+		s.Failure = state.Failure
+	}
 }
 
-// GetState safely retrieves a snapshot of the current state as a StateDTO.
+// GetState returns a safe, read-only snapshot of the current state.
 //
 // Returns:
-//   - A copy of the current state containing execution details, timestamps, errors,
-//     execution status, and metadata.
-func (s *state) GetState() domain.StateDTO {
+//   - A copy of the current StateDTO with all available execution data.
+func (s *state) GetState() *domain.StateDTO {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return domain.StateDTO{
+	return &domain.StateDTO{
 		JobID:         s.JobID,
 		StartAt:       s.StartAt,
 		EndAt:         s.EndAt,
@@ -146,22 +168,22 @@ func (s *state) GetState() domain.StateDTO {
 		Status:        s.Status,
 		ExecutionTime: s.ExecutionTime,
 		Data:          s.Data,
+		Success:       s.Success,
+		Failure:       s.Failure,
+		NextRun:       s.NextRun,
 	}
 }
 
-// SetEndState finalizes the job state at the end of execution.
+// SetEndState finalizes the job's state after execution ends,
+// updating timing, execution duration, final status, and error information.
 //
-// It updates the EndAt timestamp, calculates the final execution duration,
-// and attempts to transition to the provided final status. If an invalid
-// status transition occurs, it sets the status to Error.
-//
-// Additionally, it handles retry logic:
-//   - If the job succeeded and ResetOnSuccess is true, retry count resets.
+// If the current status is not in [Running, Waiting], it is replaced with Error,
+// and a corresponding error is recorded in JobError.
 //
 // Parameters:
-//   - resOnSuccess: Indicates whether retries should reset upon successful execution.
-//   - status: The final execution status to set.
-//   - err: An error encountered during execution, if any.
+//   - resOnSuccess: Whether to reset the retry counter on successful completion.
+//   - status: The final job status to set (e.g., Completed, Error).
+//   - err: The execution error, if any.
 func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,16 +191,26 @@ func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err erro
 	s.EndAt = time.Now()
 	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
 
+	// Invalid state transition handling
 	if !(s.Status == domain.Running || s.Status == domain.Waiting) {
+		s.Error.JobError = errs.New(errs.ErrJobWrongStatus,
+			fmt.Sprintf("wrong status transition from %s to %s", s.Status, status),
+		)
 		s.Status = domain.Error
-		s.Error = errs.New(errs.ErrJobWrongStatus, fmt.Sprintf("wrong status transition from %s to %s", s.Status, status))
 		return
 	}
+
 	s.Status = status
 
-	if s.Error != nil && resOnSuccess && err == nil {
+	if err == nil && resOnSuccess {
 		s.currentRetry = 0
 	}
 
-	s.Error = err
+	s.Error.JobError = err
+
+	if err == nil {
+		s.Success++
+	} else {
+		s.Failure++
+	}
 }

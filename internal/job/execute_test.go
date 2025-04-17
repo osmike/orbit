@@ -16,7 +16,7 @@ func newExecutableJob(t *testing.T, hooks domain.Hooks, fn domain.Fn) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	job, err := New(domain.JobDTO{
+	job, err := New("pool-id", domain.JobDTO{
 		ID:   "exec-job",
 		Name: "execution test",
 		Interval: domain.Interval{
@@ -34,24 +34,32 @@ func TestJob_Execute_Success(t *testing.T) {
 	var startCalled, successCalled, finallyCalled bool
 
 	job := newExecutableJob(t, domain.Hooks{
-		OnStart: func(ctrl domain.FnControl) error {
-			startCalled = true
-			return nil
+		OnStart: domain.Hook{
+			Fn: func(ctrl domain.FnControl, err error) error {
+				startCalled = true
+				return nil
+			},
+			IgnoreError: false,
 		},
-		OnSuccess: func(ctrl domain.FnControl) error {
-			successCalled = true
-			return nil
+		OnSuccess: domain.Hook{
+			Fn: func(ctrl domain.FnControl, err error) error {
+				successCalled = true
+				return nil
+			},
+			IgnoreError: false,
 		},
-		Finally: func(ctrl domain.FnControl) error {
-			finallyCalled = true
-			return nil
+		Finally: domain.Hook{
+			Fn: func(ctrl domain.FnControl, err error) error {
+				finallyCalled = true
+				return nil
+			},
+			IgnoreError: false,
 		},
 	}, func(ctrl domain.FnControl) error {
 		return nil
 	})
 
 	err := job.Execute()
-
 	assert.NoError(t, err)
 	assert.True(t, startCalled)
 	assert.True(t, successCalled)
@@ -62,12 +70,19 @@ func TestJob_Execute_FnFails(t *testing.T) {
 	var errorCalled, finallyCalled bool
 
 	job := newExecutableJob(t, domain.Hooks{
-		OnError: func(ctrl domain.FnControl, err error) {
-			errorCalled = true
+		OnError: domain.Hook{
+			Fn: func(ctrl domain.FnControl, err error) error {
+				errorCalled = true
+				return nil
+			},
+			IgnoreError: false,
 		},
-		Finally: func(ctrl domain.FnControl) error {
-			finallyCalled = true
-			return nil
+		Finally: domain.Hook{
+			Fn: func(ctrl domain.FnControl, err error) error {
+				finallyCalled = true
+				return nil
+			},
+			IgnoreError: false,
 		},
 	}, func(ctrl domain.FnControl) error {
 		return errors.New("job failure")
@@ -82,34 +97,44 @@ func TestJob_Execute_FnFails(t *testing.T) {
 
 func TestJob_Execute_HookFails(t *testing.T) {
 	job := newExecutableJob(t, domain.Hooks{
-		OnStart: func(ctrl domain.FnControl) error {
-			return errors.New("start error")
+		OnStart: domain.Hook{
+			Fn: func(ctrl domain.FnControl, err error) error {
+				return errs.ErrOnStartHook
+			},
+			IgnoreError: false,
 		},
 	}, func(ctrl domain.FnControl) error {
 		return nil
 	})
 
 	err := job.Execute()
+
 	assert.ErrorIs(t, err, errs.ErrOnStartHook)
 }
 
 func TestJob_Execute_FinallyFails(t *testing.T) {
 	job := newExecutableJob(t, domain.Hooks{
-		Finally: func(ctrl domain.FnControl) error {
-			return errors.New("cleanup failed")
+		Finally: domain.Hook{
+			Fn: func(ctrl domain.FnControl, err error) error {
+				return errors.New("finally hook failure")
+			},
+			IgnoreError: true,
 		},
 	}, func(ctrl domain.FnControl) error {
 		return nil
 	})
 
 	err := job.Execute()
-	assert.ErrorIs(t, err, errs.ErrFinallyHook)
+	state := job.GetState()
+
+	assert.NoError(t, err)
+	assert.EqualError(t, state.Error.HookError.Finally, "error in finally hook: job id: exec-job, error: finally hook failure")
 }
 
 func TestJob_Execute_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 
-	job, err := New(domain.JobDTO{
+	job, err := New("pool-id", domain.JobDTO{
 		ID:   "already-running",
 		Name: "test job",
 		Interval: domain.Interval{
@@ -138,7 +163,7 @@ func TestJob_Execute_WithPauseAndResume(t *testing.T) {
 
 	resumed := make(chan struct{}, 1)
 
-	job, err := New(domain.JobDTO{
+	job, err := New("pool-id", domain.JobDTO{
 		ID:       "job-pause-resume",
 		Name:     "pause/resume job",
 		Interval: domain.Interval{Time: time.Second},
@@ -179,7 +204,7 @@ func TestJob_Execute_StoppedDuringFn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	job, err := New(domain.JobDTO{
+	job, err := New("pool-id", domain.JobDTO{
 		ID:       "job-stop-test",
 		Name:     "job to stop",
 		Interval: domain.Interval{Time: time.Second},
@@ -196,10 +221,15 @@ func TestJob_Execute_StoppedDuringFn(t *testing.T) {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		job.Stop()
+		err := job.Stop()
+		assert.NoError(t, err)
 	}()
 
 	err = job.Execute()
+	state := job.GetState()
+
 	assert.ErrorIs(t, err, errs.ErrJobExecution)
 	assert.Contains(t, err.Error(), "context canceled")
+	assert.Equal(t, domain.Stopped, state.Status)
+	assert.EqualError(t, state.Error.JobError, "error in job execution: job id: job-stop-test, error: context canceled")
 }

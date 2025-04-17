@@ -5,11 +5,11 @@ import (
 	"fmt"
 )
 
+// ErrEmptyID indicates that a job or pool was created or requested without providing a valid ID.
+var ErrEmptyID = errors.New("empty ID")
+
 // General errors related to job creation and validation.
 var (
-	// ErrEmptyID indicates that a job was created or requested without providing a valid ID.
-	ErrEmptyID = errors.New("empty ID")
-
 	// ErrIDExists occurs when attempting to create a job with an ID that already exists.
 	ErrIDExists = errors.New("job ID not unique")
 
@@ -32,7 +32,8 @@ var (
 // Pool and concurrency-related errors.
 var (
 	// ErrTooManyJobs occurs when the scheduler reaches its maximum allowed number of concurrent jobs.
-	ErrTooManyJobs = errors.New("too many jobs")
+	ErrTooManyJobs  = errors.New("too many jobs")
+	ErrPoolShutdown = errors.New("pool shutdown")
 )
 
 // Scheduling errors.
@@ -75,6 +76,8 @@ var (
 
 	// ErrJobNotPausedOrStopped occurs when an operation intended for a paused or stopped job is attempted on an active job.
 	ErrJobNotPausedOrStopped = errors.New("job is not paused or stopped")
+
+	ErrRetryFlagNotActive = errors.New("retry flag is not active")
 )
 
 // Lifecycle hook errors.
@@ -93,6 +96,10 @@ var (
 
 	// ErrOnResumeHook indicates an error occurred during execution of the OnResume hook.
 	ErrOnResumeHook = errors.New("error in resume hook")
+
+	ErrOnErrorHook = errors.New("error in on error hook")
+
+	ErrOnStopHook = errors.New("error in on stop hook")
 )
 
 // New wraps a given error with additional contextual information.

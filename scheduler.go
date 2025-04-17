@@ -17,17 +17,13 @@ import (
 //     Default is 100ms if set to 0.
 //   - IdleTimeout: Duration after which idle workers may be terminated.
 //     Default is 100 hours if set to 0.
-type PoolConfig struct {
-	*domain.Pool
-}
+type PoolConfig = domain.Pool
 
 // Pool represents a job execution pool.
 //
 // Provides methods for managing job execution lifecycle, concurrency,
 // job state control, and interaction with monitoring.
-type Pool struct {
-	*pool.Pool
-}
+type Pool = pool.Pool
 
 // JobConfig defines a job's configuration and execution details.
 //
@@ -41,18 +37,14 @@ type Pool struct {
 //   - EndAt: Latest time when the job can still run.
 //   - Retry: Retry behavior in case of job execution failures.
 //   - Hooks: Lifecycle hooks for custom logic execution.
-type JobConfig struct {
-	*domain.JobDTO
-}
+type JobConfig = domain.JobDTO
 
 // IntervalConfig encapsulates job scheduling settings.
 //
 // Parameters:
 //   - Time: Time between job executions (set 0 if using cron expression).
 //   - CronExpr: Cron expression defining job execution schedule (leave empty if using interval).
-type IntervalConfig struct {
-	*domain.Interval
-}
+type IntervalConfig = domain.Interval
 
 // RetryConfig defines retry behavior for a job.
 //
@@ -60,9 +52,7 @@ type IntervalConfig struct {
 //   - Count: Number of allowed retries after execution failure.
 //   - Time: Time interval between retries.
 //   - ResetOnSuccess: Flag to reset retries count after successful job execution.
-type RetryConfig struct {
-	*domain.Retry
-}
+type RetryConfig = domain.Retry
 
 // HooksFunc provides lifecycle hooks to inject custom logic at different job execution stages.
 //
@@ -74,9 +64,7 @@ type RetryConfig struct {
 //   - OnPause: Executed when job is paused.
 //   - OnResume: Executed when job resumes after pause.
 //   - Finally: Always executed after job ends (successful, error, paused, stopped).
-type HooksFunc struct {
-	*domain.Hooks
-}
+type HooksFunc = domain.Hooks
 
 // FnControl provides job execution control and runtime metadata storage.
 //
@@ -87,9 +75,7 @@ type HooksFunc struct {
 //
 // Methods:
 //   - SaveData(map[string]interface{}): Stores custom job runtime metadata.
-type FnControl struct {
-	domain.FnControl
-}
+type FnControl = domain.FnControl
 
 // Monitoring interface represents components responsible for collecting, storing,
 // and processing job execution metrics.
@@ -100,9 +86,7 @@ type FnControl struct {
 // Methods:
 //   - SaveMetrics(StateDTO): Stores metrics for a given job state.
 //   - GetMetrics() map[string]interface{}: Retrieves collected metrics.
-type Monitoring interface {
-	domain.Monitoring
-}
+type Monitoring = domain.Monitoring
 
 // Scheduler orchestrates the creation and management of job execution pools and scheduled jobs.
 //
@@ -129,7 +113,7 @@ type Scheduler struct {
 // Returns:
 //   - Pointer to a new Scheduler instance.
 func New(ctx context.Context) *Scheduler {
-	return &Scheduler{ctx: ctx}
+	return &Scheduler{ctx}
 }
 
 // CreatePool creates and configures a new job execution pool.
@@ -141,17 +125,12 @@ func New(ctx context.Context) *Scheduler {
 //
 // Returns:
 //   - Initialized and ready-to-use Pool instance.
-func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) *Pool {
-	p := &Pool{
-		Pool: &pool.Pool{},
-	}
-
+func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) (*Pool, error) {
 	if mon == nil {
 		mon = defaultMonitoring.New()
 	}
 
-	p.Init(s.ctx, *cfg.Pool, mon)
-	return p
+	return pool.New(s.ctx, cfg, mon)
 }
 
 // AddJob creates and registers a new job in the specified scheduler pool.
@@ -166,7 +145,7 @@ func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) *Pool {
 //   - nil on successful addition.
 //   - Error describing the failure reason otherwise.
 func (s *Scheduler) AddJob(pool *Pool, cfg JobConfig) error {
-	j, err := job.New(*cfg.JobDTO, pool.Ctx)
+	j, err := job.New(pool.ID, cfg, pool.Ctx)
 	if err != nil {
 		return err
 	}

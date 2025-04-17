@@ -20,7 +20,7 @@ import (
 //   - mon: Monitoring interface instance used for tracking job metrics.
 func (j *Job) ProcessStart(mon domain.Monitoring) {
 	startTime := time.Now()
-	j.UpdateState(domain.StateDTO{
+	j.UpdateStateStrict(domain.StateDTO{
 		StartAt:       startTime,
 		EndAt:         time.Time{},
 		Status:        domain.Running,
@@ -45,6 +45,9 @@ func (j *Job) ProcessStart(mon domain.Monitoring) {
 //   - err: Any error encountered during job execution (nil if successful).
 //   - mon: Monitoring interface instance used for final job metrics tracking.
 func (j *Job) ProcessEnd(status domain.JobStatus, err error, mon domain.Monitoring) {
+	if status == domain.Ended {
+		j.CloseChannels()
+	}
 	j.state.SetEndState(j.JobDTO.Retry.ResetOnSuccess, status, err)
 	j.SaveMetrics(mon)
 }
@@ -70,5 +73,16 @@ func (j *Job) ProcessRun(mon domain.Monitoring) error {
 	if time.Duration(execTime) > j.Timeout {
 		return errs.New(errs.ErrJobTimout, j.ID)
 	}
+	return nil
+}
+
+func (j *Job) ProcessError(mon domain.Monitoring) error {
+	err := j.Retry()
+	if err != nil {
+		j.ProcessEnd(domain.Ended, err, mon)
+		j.CloseChannels()
+		return err
+	}
+	j.SetStatus(domain.Completed)
 	return nil
 }

@@ -7,85 +7,103 @@ import (
 	"sync"
 )
 
-// Execute runs the job's main function, managing the full lifecycle, including hooks and error handling.
+// Execute runs the job's main function, managing the full lifecycle including state control, hooks, and error propagation.
 //
-// Execution steps:
-//  1. Checks if the job is currently not running. If it's already running, immediately returns ErrJobStillRunning.
-//  2. Initializes execution context (`FnControl`).
-//  3. Executes the OnStart hook. If this hook returns an error, execution stops immediately.
-//  4. Executes the job's main function (`Fn`). If the job function fails, triggers the OnError hook.
-//  5. Executes the OnSuccess hook if the job function completed without errors.
-//  6. Ensures the Finally hook runs last, regardless of the job's success or failure status.
+// Execution Flow:
+//  1. Verifies that the job is not already running. If it is, returns ErrJobStillRunning.
+//  2. Resets internal state (`FnControl.data`) for the new execution.
+//  3. Executes the OnStart hook. If this hook fails and IgnoreError is false, execution is aborted.
+//  4. Runs the job’s main logic (`Fn`). On failure, triggers the OnError hook and propagates the error.
+//  5. If the job function completes successfully, invokes the OnSuccess hook.
+//  6. Regardless of outcome, executes the Finally hook as a cleanup step.
 //
 // Returns:
-//   - An error indicating the execution outcome or hook failures. If multiple hooks fail, the last encountered error is returned.
+//   - An error indicating the result of the execution or hook failures. If multiple failures occur,
+//     the last one takes precedence.
 func (j *Job) Execute() (err error) {
-	// Check if the job is already running
+	// Ensure the job is not already running
 	select {
 	case <-j.doneCh:
 		j.ctrl.data = &sync.Map{}
 	default:
-		return errs.New(errs.ErrJobStillRunning, j.ID)
+		err = errs.New(errs.ErrJobStillRunning, j.ID)
+		return
 	}
 
-	// Ensure Finally hook always executes
+	// Ensure the Finally hook always runs
 	defer func() {
 		if finalizeErr := j.finalizeExecution(); finalizeErr != nil {
 			err = finalizeErr
 		}
 	}()
 
-	// Run OnStart hook, abort execution on error
+	// Execute OnStart hook
 	if err = j.runHook(j.Hooks.OnStart, errs.ErrOnStartHook); err != nil {
 		return err
 	}
 
-	// Execute main job function (Fn)
+	// Execute the job’s main function
 	if execErr := j.Fn(j.ctrl); execErr != nil {
-		if j.Hooks.OnError != nil {
-			j.Hooks.OnError(j.ctrl, execErr)
-		}
+		err = j.runHook(j.Hooks.OnError, errs.ErrOnErrorHook)
 		err = errs.New(errs.ErrJobExecution, fmt.Sprintf("job id: %s, error: %v", j.ID, execErr))
-		return err
+		j.handleError(err)
+		return
 	}
 
-	// Run OnSuccess hook
-	if err = j.runHook(j.Hooks.OnSuccess, errs.ErrOnSuccessHook); err != nil {
-		return err
-	}
+	// Execute OnSuccess hook
+	err = j.runHook(j.Hooks.OnSuccess, errs.ErrOnSuccessHook)
 
-	return nil
+	return
 }
 
-// runHook executes a given lifecycle hook safely and wraps any hook errors.
+// runHook safely executes a lifecycle hook, handles any errors, and conditionally suppresses them based on the hook configuration.
 //
 // Parameters:
-//   - hook: The hook function to execute (OnStart, OnSuccess, etc.).
-//   - errType: The error type to wrap hook execution errors.
+//   - hook: The lifecycle hook to execute (e.g., OnStart, OnSuccess, etc.).
+//   - errType: The logical error type to wrap the hook error.
+//
+// Behavior:
+//   - Recovers from panics and wraps them into typed hook errors.
+//   - Delegates hook errors to the job’s error handler.
+//   - Respects the `IgnoreError` flag: if true, hook errors are suppressed.
 //
 // Returns:
-//   - An error if the hook fails, nil otherwise.
-func (j *Job) runHook(hook func(ctrl domain.FnControl) error, errType error) error {
-	if hook != nil {
-		if err := hook(j.ctrl); err != nil {
-			return errs.New(errType, fmt.Sprintf("job id: %s, error: %v", j.ID, err))
-		}
+//   - A wrapped error if the hook fails and is not suppressed, nil otherwise.
+func (j *Job) runHook(hook domain.Hook, errType error) (err error) {
+	if hook.Fn == nil {
+		return
 	}
-	return nil
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = errs.New(errType, fmt.Sprintf("job id: %s, panic: %v", j.ID, r))
+		}
+		j.handleError(err)
+		if hook.IgnoreError {
+			err = nil
+		}
+	}()
+
+	if err = hook.Fn(j.ctrl, nil); err != nil {
+		err = errs.New(errType, fmt.Sprintf("job id: %s, error: %v", j.ID, err))
+		return
+	}
+
+	return
 }
 
-// finalizeExecution executes the Finally hook, ensuring that this final cleanup always occurs after job execution,
-// regardless of previous errors or successful completion.
+// finalizeExecution ensures that the job’s Finally hook is executed after every run,
+// and resets the execution control channel to allow future runs.
 //
-// This method also resets the job execution signal (`doneCh`) to allow future executions.
+// Behavior:
+//   - Executes the Finally hook regardless of prior errors or success.
+//   - Resets the `doneCh` channel used to mark job availability.
 //
 // Returns:
-//   - An error if the Finally hook encounters an issue.
+//   - An error if the Finally hook fails, nil otherwise.
 func (j *Job) finalizeExecution() error {
-	if j.Hooks.Finally != nil {
-		if err := j.Hooks.Finally(j.ctrl); err != nil {
-			return errs.New(errs.ErrFinallyHook, fmt.Sprintf("job id: %s, error: %v", j.ID, err))
-		}
+	if err := j.runHook(j.Hooks.Finally, errs.ErrFinallyHook); err != nil {
+		return err
 	}
 
 	select {

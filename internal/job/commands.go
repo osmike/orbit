@@ -44,8 +44,6 @@ func (j *Job) Pause(timeout time.Duration) error {
 			}
 		}()
 	default:
-		// pauseCh is full — means a pause is already in progress and not yet acknowledged
-		j.SetStatus(domain.Running)
 		return errs.New(errs.ErrJobPaused, j.ID)
 	}
 
@@ -65,6 +63,7 @@ func (j *Job) Resume() error {
 	case domain.Paused:
 		select {
 		case j.resumeCh <- struct{}{}:
+			j.SetStatus(domain.Running)
 			return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook)
 		default:
 			// resumeCh is full — resume already in progress or not handled
@@ -86,7 +85,7 @@ func (j *Job) Resume() error {
 // This method is idempotent and can be safely called multiple times.
 //
 // If the OnStop hook is defined, it is executed after updating the state.
-func (j *Job) Stop() {
+func (j *Job) Stop() error {
 	j.cancel()
 
 	switch j.GetStatus() {
@@ -100,7 +99,5 @@ func (j *Job) Stop() {
 	}
 
 	// Execute the OnStop hook if provided (for cleanup or state saving).
-	if j.Hooks.OnStop != nil {
-		_ = j.runHook(j.Hooks.OnStop, errs.ErrJobWrongStatus)
-	}
+	return j.runHook(j.Hooks.OnStop, errs.ErrOnStopHook)
 }

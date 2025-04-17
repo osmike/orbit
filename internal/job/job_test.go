@@ -14,7 +14,7 @@ import (
 
 func TestJob_New_Valid(t *testing.T) {
 	ctx := context.Background()
-	j, err := New(domain.JobDTO{
+	j, err := New("pool-id", domain.JobDTO{
 		ID:   "valid-job",
 		Name: "test",
 		Interval: domain.Interval{
@@ -31,7 +31,7 @@ func TestJob_New_Valid(t *testing.T) {
 
 func TestJob_New_InvalidID(t *testing.T) {
 	ctx := context.Background()
-	_, err := New(domain.JobDTO{
+	_, err := New("pool-id", domain.JobDTO{
 		ID: "",
 		Fn: func(ctrl domain.FnControl) error { return nil },
 	}, ctx)
@@ -40,7 +40,7 @@ func TestJob_New_InvalidID(t *testing.T) {
 
 func TestJob_New_InvalidFn(t *testing.T) {
 	ctx := context.Background()
-	_, err := New(domain.JobDTO{
+	_, err := New("pool-id", domain.JobDTO{
 		ID: "no-fn",
 	}, ctx)
 	assert.ErrorIs(t, err, errs.ErrEmptyFunction)
@@ -48,7 +48,7 @@ func TestJob_New_InvalidFn(t *testing.T) {
 
 func TestJob_New_InvalidCronAndInterval(t *testing.T) {
 	ctx := context.Background()
-	_, err := New(domain.JobDTO{
+	_, err := New("pool-id", domain.JobDTO{
 		ID: "mixed",
 		Interval: domain.Interval{
 			Time:     time.Second,
@@ -61,7 +61,7 @@ func TestJob_New_InvalidCronAndInterval(t *testing.T) {
 
 func TestJob_GetSetStatus(t *testing.T) {
 	ctx := context.Background()
-	j, _ := New(domain.JobDTO{
+	j, _ := New("pool-id", domain.JobDTO{
 		ID:       "status-check",
 		Fn:       func(ctrl domain.FnControl) error { return nil },
 		Interval: domain.Interval{Time: time.Second},
@@ -77,7 +77,7 @@ func TestJob_GetSetStatus(t *testing.T) {
 
 func TestJob_SaveUserDataToState(t *testing.T) {
 	ctx := context.Background()
-	j, _ := New(domain.JobDTO{
+	j, _ := New("pool-id", domain.JobDTO{
 		ID:       "data-job",
 		Fn:       func(ctrl domain.FnControl) error { return nil },
 		Interval: domain.Interval{Time: time.Second},
@@ -93,7 +93,7 @@ func TestJob_SaveUserDataToState(t *testing.T) {
 }
 
 func TestJob_UpdateState(t *testing.T) {
-	job, err := New(domain.JobDTO{
+	job, err := New("pool-id", domain.JobDTO{
 		ID:   "update-state-job",
 		Name: "update test",
 		Interval: domain.Interval{
@@ -114,7 +114,7 @@ func TestJob_UpdateState(t *testing.T) {
 }
 
 func TestJob_SaveMetrics(t *testing.T) {
-	job, err := New(domain.JobDTO{
+	job, err := New("pool-id", domain.JobDTO{
 		ID:   "metrics-job",
 		Name: "metrics save",
 		Interval: domain.Interval{

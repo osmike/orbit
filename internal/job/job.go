@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
@@ -11,67 +12,69 @@ import (
 
 // Job represents a scheduled task managed and executed by the scheduler.
 //
-// It encapsulates execution logic, scheduling details, lifecycle control,
-// runtime state, and job metadata.
+// It encapsulates the execution logic, scheduling parameters, lifecycle control,
+// runtime state, and associated metadata.
 type Job struct {
-	domain.JobDTO // Embedded job configuration parameters.
+	domain.JobDTO // Embedded configuration data provided at registration.
+
+	PoolID string
 
 	ctx    context.Context    // Execution context for cancellation and timeouts.
-	cancel context.CancelFunc // Function to explicitly cancel job execution.
+	cancel context.CancelFunc // Function to cancel execution.
 
-	state *state     // Runtime job execution state (status, errors, execution time).
-	mu    sync.Mutex // Mutex to ensure thread-safe state manipulation.
+	state *state       // Internal state tracking execution progress and metadata.
+	mu    sync.RWMutex // Protects concurrent access to mutable fields.
 
-	pauseCh  chan struct{} // Channel to signal job pause requests.
-	resumeCh chan struct{} // Channel to signal job resume requests.
+	pauseCh  chan struct{} // Channel for signaling pause events.
+	resumeCh chan struct{} // Channel for signaling resume events.
 
-	doneCh chan struct{} // Channel signaling completion of job execution.
+	doneCh chan struct{} // Channel indicating job availability for execution.
 
-	cron *CronSchedule // Parsed cron schedule if job is cron-based.
+	cron *CronSchedule // Parsed cron expression (if provided).
 
-	currentRetry int        // Number of retries attempted after job failures.
-	ctrl         *FnControl // Control interface passed to the job's main function.
+	//currentRetry int        // Current retry attempt number.
+	ctrl *FnControl // Control interface passed to the job's main function.
+
+	processCh chan struct{}
 }
 
-// New creates and initializes a Job instance from the provided configuration and execution context.
+// New creates and initializes a new Job instance based on the provided configuration and context.
 //
-// Performs validation and default value initialization:
-//   - Ensures Job ID and function are provided.
-//   - Sets Job Name to Job ID if not specified.
-//   - Verifies scheduling parameters (interval or cron, but not both).
-//   - Parses and validates cron expressions.
-//   - Initializes default StartAt and EndAt times.
-//   - Sets up the execution context with cancellation support.
+// Validation & Initialization steps:
+//   - Ensures required fields (ID, Fn) are present.
+//   - Defaults job Name to ID if empty.
+//   - Ensures mutually exclusive scheduling fields (Interval vs Cron).
+//   - Parses and validates cron expressions (if present).
+//   - Initializes timing bounds (StartAt, EndAt) and internal state.
 //
 // Parameters:
-//   - jobDTO: Job configuration details.
-//   - ctx: Execution context, allowing external cancellation control.
+//   - jobDTO: Job configuration object.
+//   - ctx: Parent context for job lifecycle.
 //
 // Returns:
-//   - A pointer to a fully initialized Job.
-//   - An error if provided configuration parameters are invalid or incomplete.
-func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
+//   - A pointer to the created Job instance.
+//   - An error if validation fails.
+func New(poolID string, jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	job := &Job{
 		JobDTO: jobDTO,
-		state:  &state{},
 	}
-
+	if poolID == "" {
+		return nil, errs.New(errs.ErrEmptyID, fmt.Sprintf("pool id on job id - %s, job name- %s is empty", job.ID, job.Name))
+	}
+	job.PoolID = poolID
 	if job.ID == "" {
 		return nil, errs.New(errs.ErrEmptyID, fmt.Sprintf("job name - %s", job.Name))
 	}
-
 	if job.Fn == nil {
 		return nil, errs.New(errs.ErrEmptyFunction, job.ID)
 	}
-
 	if job.Name == "" {
 		job.Name = job.ID
 	}
-
 	if job.Interval.CronExpr != "" && job.Interval.Time > 0 {
 		return nil, errs.New(errs.ErrMixedScheduleType, job.ID)
 	}
-
+	nextRun := time.Now()
 	if job.Interval.CronExpr != "" {
 		cron, err := ParseCron(job.Interval.CronExpr)
 		if err != nil {
@@ -79,23 +82,24 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 		}
 		job.cron = cron
 	}
-
 	if job.StartAt.IsZero() {
 		job.StartAt = time.Now()
 	}
-
 	if job.EndAt.IsZero() {
 		job.EndAt = domain.MAX_END_AT
 	} else if job.EndAt.Before(job.StartAt) {
 		return nil, errs.New(errs.ErrWrongTime, fmt.Sprintf("ending time cannot be before starting time, id: %s", job.ID))
 	}
 
-	job.state = job.state.Init(job.ID)
+	job.state = newState(job.ID)
+	job.state.NextRun = nextRun
 	job.ctx, job.cancel = context.WithCancel(ctx)
 
 	job.pauseCh = make(chan struct{}, 1)
 	job.resumeCh = make(chan struct{}, 1)
 	job.doneCh = make(chan struct{}, 1)
+	job.processCh = make(chan struct{}, 1)
+
 	job.doneCh <- struct{}{}
 
 	job.ctrl = &FnControl{
@@ -108,62 +112,89 @@ func New(jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
 	return job, nil
 }
 
-// GetMetadata returns a copy of the job's configuration metadata.
+// GetMetadata returns the job's immutable configuration metadata.
 //
 // Returns:
-//   - domain.JobDTO containing configuration details.
+//   - The original JobDTO used to define the job.
 func (j *Job) GetMetadata() domain.JobDTO {
 	return j.JobDTO
 }
 
-// GetState returns the current execution state of the job.
+// GetState returns the current state snapshot of the job.
 //
 // Returns:
-//   - domain.StateDTO containing current state details.
-func (j *Job) GetState() domain.StateDTO {
+//   - A pointer to the StateDTO containing runtime execution metadata.
+func (j *Job) GetState() *domain.StateDTO {
 	return j.state.GetState()
 }
 
-// GetStatus retrieves the job's current execution status.
+// GetStatus retrieves the current execution status of the job.
 //
 // Returns:
-//   - Current job status (e.g., Waiting, Running, Completed, etc.).
+//   - The JobStatus (e.g., Waiting, Running, Completed, etc.).
 func (j *Job) GetStatus() domain.JobStatus {
 	return j.state.GetStatus()
 }
 
-// SetStatus explicitly sets the job's execution status.
+// SetStatus sets the job’s current execution status explicitly.
 //
 // Parameters:
-//   - status: New job execution status to apply.
+//   - status: The new status to assign.
 func (j *Job) SetStatus(status domain.JobStatus) {
 	j.state.SetStatus(status)
 }
 
-// TrySetStatus attempts to set a new job status if current status matches any allowed states.
+func (j *Job) LockJob() bool {
+	select {
+	case j.processCh <- struct{}{}:
+		return true
+	default:
+		return false // already locked
+	}
+}
+
+func (j *Job) UnlockJob() {
+	select {
+	case <-j.processCh:
+	default:
+		// do nothing if already unlocked
+	}
+}
+
+// TrySetStatus attempts to change the job's status if its current status matches one of the allowed values.
 //
 // Parameters:
-//   - allowed: Slice of allowed current statuses for the transition.
+//   - allowed: List of allowed current statuses.
 //   - status: Desired new status.
 //
 // Returns:
-//   - true if the status update was successful; false otherwise.
+//   - true if the transition was successful; false otherwise.
 func (j *Job) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) bool {
 	return j.state.TrySetStatus(allowed, status)
 }
 
-// UpdateState updates the current state, applying only non-zero values from the provided state.
+// UpdateState performs a partial update of the job’s internal state.
 //
-// Useful for incremental updates without overwriting unchanged state data.
+// Fields in the provided StateDTO will only be applied if non-zero (e.g., nil errors are ignored).
 //
 // Parameters:
-//   - state: domain.StateDTO containing state updates.
+//   - state: Partial state update.
 func (j *Job) UpdateState(state domain.StateDTO) {
-	j.state.Update(state)
+	j.state.Update(state, false)
 }
 
-// SaveUserDataToState transfers stored user data from FnControl to the job state,
-// making it available for external monitoring or reporting purposes.
+// UpdateStateStrict forcefully overwrites the job’s current state with all fields from the given StateDTO.
+//
+// This is useful for full-state replacements during restoration or forced overrides.
+//
+// Parameters:
+//   - state: Complete state object to replace the current one.
+func (j *Job) UpdateStateStrict(state domain.StateDTO) {
+	j.state.Update(state, true)
+}
+
+// SaveUserDataToState transfers all runtime key-value data stored during execution
+// (via FnControl.SaveData) into the job state for later retrieval or monitoring.
 func (j *Job) SaveUserDataToState() {
 	result := make(map[string]interface{})
 	j.ctrl.data.Range(func(key, value interface{}) bool {
@@ -175,14 +206,86 @@ func (j *Job) SaveUserDataToState() {
 	})
 }
 
-// SaveMetrics records job execution metrics using the provided Monitoring interface.
-//
-// This method ensures job-specific data is saved to the state and then passed to the monitoring system.
+// SaveMetrics captures the job’s current runtime state and sends it to the provided Monitoring interface.
 //
 // Parameters:
-//   - mon: Monitoring interface responsible for persisting job metrics.
+//   - mon: Monitoring interface that stores runtime metrics externally.
 func (j *Job) SaveMetrics(mon domain.Monitoring) {
 	j.SaveUserDataToState()
-	state := j.GetState()
-	mon.SaveMetrics(state)
+	s := j.GetState()
+	mon.SaveMetrics(*s)
+}
+
+// SetTimeout updates the maximum allowed execution duration for the job.
+//
+// If the job exceeds this timeout, it may be forcefully stopped by the scheduler.
+//
+// Parameters:
+//   - timeout: Maximum allowed execution duration.
+func (j *Job) SetTimeout(timeout time.Duration) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Timeout = timeout
+}
+
+// handleError processes a given error by categorizing it into hook-specific or execution-level error types,
+// and updating the job’s state accordingly.
+//
+// Parameters:
+//   - err: The error encountered during execution or hook invocation.
+func (j *Job) handleError(err error) {
+	if err == nil {
+		return
+	}
+
+	switch {
+	case errors.Is(err, errs.ErrOnStartHook):
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				HookError: domain.HookError{OnStart: err},
+			},
+		})
+	case errors.Is(err, errs.ErrOnStopHook):
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				HookError: domain.HookError{OnStop: err},
+			},
+		})
+	case errors.Is(err, errs.ErrOnErrorHook):
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				HookError: domain.HookError{OnError: err},
+			},
+		})
+	case errors.Is(err, errs.ErrOnSuccessHook):
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				HookError: domain.HookError{OnSuccess: err},
+			},
+		})
+	case errors.Is(err, errs.ErrOnResumeHook):
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				HookError: domain.HookError{OnResume: err},
+			},
+		})
+	case errors.Is(err, errs.ErrOnPauseHook):
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				HookError: domain.HookError{OnPause: err},
+			},
+		})
+	case errors.Is(err, errs.ErrFinallyHook):
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				HookError: domain.HookError{Finally: err},
+			},
+		})
+	default:
+		j.UpdateState(domain.StateDTO{
+			Error: domain.StateError{
+				JobError: err,
+			},
+		})
+	}
 }

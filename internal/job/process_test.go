@@ -12,7 +12,7 @@ import (
 )
 
 func newTestJobForProcess(t *testing.T) *Job {
-	j, err := New(domain.JobDTO{
+	j, err := New("pool-id", domain.JobDTO{
 		ID:       "test-job-process",
 		Name:     "process test",
 		Interval: domain.Interval{Time: time.Second},
