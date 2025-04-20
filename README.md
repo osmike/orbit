@@ -94,10 +94,6 @@ func main() {
 
 ## 📊 Monitoring & Metrics
 
-Out-of-the-box job execution metrics:
-
-## 📊 Monitoring & Metrics
-
 Out-of-the-box job execution metrics include:
 
 - **⏱ Start Time**
