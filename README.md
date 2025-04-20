@@ -1,15 +1,15 @@
 
-# 🚀 Go Scheduler – Task Scheduling Made Easy!
+# 🚀 Orbit Scheduler – Task Scheduling Made Easy!
 
 [![Go](https://img.shields.io/badge/Made%20with-Go-blue)](https://golang.org)
 [![Coverage](https://img.shields.io/badge/Coverage-87%25-brightgreen)](https://github.com/osmike/orbit)
-[![License](https://img.shields.io/github/license/osmike/orbit)](LICENSE)
+![MIT License](https://img.shields.io/badge/license-MIT-green.svg)
 
-Go Scheduler is a powerful yet intuitive job scheduler written entirely in Go. Effortlessly schedule, run, monitor, and manage your tasks, ensuring reliability and efficiency.
+Orbit is a powerful yet intuitive job scheduler written entirely in Go. Effortlessly schedule, run, monitor, and manage your tasks, ensuring reliability and efficiency.
 
 ---
 
-## ✨ Why Go Scheduler?
+## ✨ Why Orbit?
 
 - **🔧 Simple API**: Quickly set up scheduled jobs using clean and intuitive methods.
 - **⚡ High Performance**: Leverages Go's concurrency model to run thousands of tasks effortlessly.
