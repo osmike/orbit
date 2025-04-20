@@ -14,8 +14,10 @@ Orbit is a powerful yet intuitive job scheduler written entirely in Go. Effortle
 - **🔧 Simple API**: Quickly set up scheduled jobs using clean and intuitive methods.
 - **⚡ High Performance**: Leverages Go's concurrency model to run thousands of tasks effortlessly.
 - **📈 Built-In Monitoring**: Track job execution in real-time with built-in monitoring hooks.
-- **🔒 Safe & Reliable**: Robust error handling and recovery, so your tasks always stay healthy.
-- **🎯 Flexible Scheduling**: Supports interval-based and cron-based scheduling.
+- **🎯 Flexible Scheduling**: Supports both interval-based and cron-based schedules.
+- **🧠 Intelligent Control**: Pause, resume, and stop jobs on the fly — interactively control any task like media playback.
+- **🔒 Safe & Reliable**: Panic recovery and error isolation ensure your scheduler never crashes.
+
 
 ---
 
@@ -85,10 +87,11 @@ func main() {
 
 ## 🛠 Features
 
+- **🎮 Live Control**: Pause, Resume, or Stop jobs dynamically — as easily as managing a video or audio track.
 - **Concurrency Control**: Limit how many jobs run simultaneously.
 - **Lifecycle Hooks**: Customize behavior with hooks (`OnStart`, `OnSuccess`, `OnError`, etc.).
-- **Retry Mechanism**: Automatically retry failed tasks.
-- **Graceful Shutdown**: Ensures tasks are safely terminated without losing data.
+- **Retry Mechanism**: Automatically retry failed tasks with configurable strategy.
+- **Graceful Shutdown**: Ensures all jobs terminate safely and persist state.
 
 ---
 
