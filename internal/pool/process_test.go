@@ -11,20 +11,22 @@ import (
 	"time"
 )
 
-func newTestJobProcess(t *testing.T, poolID string, id string, status domain.JobStatus, fn domain.Fn, ctx context.Context) *job.Job {
-	j, err := job.New(poolID, domain.JobDTO{
+func newTestJobProcess(t *testing.T, retryFlag bool, id string, status domain.JobStatus, fn domain.Fn, ctx context.Context, mon domain.Monitoring) *job.Job {
+	j, err := job.New(domain.JobDTO{
 		ID:       id,
 		Interval: domain.Interval{Time: 20 * time.Millisecond},
 		Fn:       fn,
-	}, ctx)
+		Retry: domain.Retry{
+			Active: retryFlag,
+		},
+	}, ctx, mon)
 	assert.NoError(t, err)
 	j.SetStatus(status)
 	return j
 }
 
-func newTestPoolProcess(t *testing.T) *Pool {
+func newTestPoolProcess() *Pool {
 	p, _ := New(context.Background(), domain.Pool{
-		ID:            "new-pool",
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, monitoring.New())
@@ -32,15 +34,15 @@ func newTestPoolProcess(t *testing.T) *Pool {
 }
 
 func TestPool_processWaiting_ExecutesIfDue(t *testing.T) {
-	p := newTestPoolProcess(t)
+	p := newTestPoolProcess()
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, 1)
 	done := make(chan struct{}, 1)
 
-	j := newTestJobProcess(t, p.ID, "wait-now", domain.Waiting, func(ctrl domain.FnControl) error {
+	j := newTestJobProcess(t, false, "wait-now", domain.Waiting, func(ctrl domain.FnControl) error {
 		done <- struct{}{}
 		return nil
-	}, p.Ctx)
+	}, p.Ctx, p.Mon)
 
 	go p.processWaiting(j, sem, wg)
 
@@ -55,11 +57,11 @@ func TestPool_processWaiting_ExecutesIfDue(t *testing.T) {
 }
 
 func TestPool_processRunning_MarksErrorOnTimeout(t *testing.T) {
-	p := newTestPoolProcess(t)
-	j := newTestJobProcess(t, p.ID, "timeout-job", domain.Running, func(ctrl domain.FnControl) error {
+	p := newTestPoolProcess()
+	j := newTestJobProcess(t, false, "timeout-job", domain.Running, func(ctrl domain.FnControl) error {
 		time.Sleep(100 * time.Millisecond)
 		return nil
-	}, p.Ctx)
+	}, p.Ctx, p.Mon)
 	j.SetTimeout(1 * time.Millisecond)
 
 	// simulate running job exceeding timeout
@@ -71,10 +73,10 @@ func TestPool_processRunning_MarksErrorOnTimeout(t *testing.T) {
 }
 
 func TestPool_processCompleted_MarksEnded(t *testing.T) {
-	p := newTestPoolProcess(t)
-	j := newTestJobProcess(t, p.ID, "one-shot-job", domain.Running, func(ctrl domain.FnControl) error {
+	p := newTestPoolProcess()
+	j := newTestJobProcess(t, false, "one-shot-job", domain.Running, func(ctrl domain.FnControl) error {
 		return nil
-	}, p.Ctx)
+	}, p.Ctx, p.Mon)
 
 	// simulate job scheduled in the past
 	j.UpdateState(domain.StateDTO{StartAt: time.Now().Add(-time.Hour)})
@@ -84,23 +86,25 @@ func TestPool_processCompleted_MarksEnded(t *testing.T) {
 }
 
 func TestPool_processError_RetriesIfPossible(t *testing.T) {
-	p := newTestPoolProcess(t)
-	j := newTestJobProcess(t, p.ID, "retry-job", domain.Error, func(ctrl domain.FnControl) error {
+	p := newTestPoolProcess()
+	j := newTestJobProcess(t, true, "retry-job", domain.Error, func(ctrl domain.FnControl) error {
 		return nil
-	}, p.Ctx)
+	}, p.Ctx, p.Mon)
 
 	j.JobDTO.Retry.Count = 1
 
 	p.processError(j)
 
-	assert.Equal(t, domain.Waiting, j.GetStatus())
+	time.Sleep(10 * time.Millisecond)
+
+	assert.Equal(t, domain.Completed, j.GetStatus())
 }
 
 func TestPool_processError_SkipsIfRetryLimit(t *testing.T) {
-	p := newTestPoolProcess(t)
-	j := newTestJobProcess(t, p.ID, "no-retry", domain.Error, func(ctrl domain.FnControl) error {
+	p := newTestPoolProcess()
+	j := newTestJobProcess(t, false, "no-retry", domain.Error, func(ctrl domain.FnControl) error {
 		return nil
-	}, p.Ctx)
+	}, p.Ctx, p.Mon)
 
 	j.JobDTO.Retry.Count = 0
 

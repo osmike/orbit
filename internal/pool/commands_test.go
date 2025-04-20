@@ -16,7 +16,6 @@ import (
 func newTestPoolCommands(t *testing.T) *Pool {
 	ctx := context.Background()
 	cfg := domain.Pool{
-		ID:            "new-pool",
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 		IdleTimeout:   5 * time.Second,
@@ -28,13 +27,14 @@ func newTestPoolCommands(t *testing.T) *Pool {
 	return p
 }
 
-func newTestJobCommands(t *testing.T, poolID string, jobID string, status domain.JobStatus, fn domain.Fn, ctx context.Context) *job.Job {
-	j, err := job.New(poolID, domain.JobDTO{
+func newTestJobCommands(t *testing.T, jobID string, status domain.JobStatus, fn domain.Fn, ctx context.Context, mon domain.Monitoring) *job.Job {
+
+	j, err := job.New(domain.JobDTO{
 		ID:       jobID,
 		Name:     jobID,
 		Fn:       fn,
 		Interval: domain.Interval{Time: time.Second},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 	j.SetStatus(status)
 	return j
@@ -43,7 +43,7 @@ func newTestJobCommands(t *testing.T, poolID string, jobID string, status domain
 func TestPoolCommands_AddJob_Success(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-	j := newTestJobCommands(t, p.ID, "job-1", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx)
+	j := newTestJobCommands(t, "job-1", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
 
 	err := p.AddJob(j)
 	assert.NoError(t, err)
@@ -52,7 +52,7 @@ func TestPoolCommands_AddJob_Success(t *testing.T) {
 func TestPoolCommands_AddJob_Duplicate(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-	j := newTestJobCommands(t, p.ID, "job-dup", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx)
+	j := newTestJobCommands(t, "job-dup", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
 
 	assert.NoError(t, p.AddJob(j))
 	err := p.AddJob(j)
@@ -62,7 +62,7 @@ func TestPoolCommands_AddJob_Duplicate(t *testing.T) {
 func TestPoolCommands_AddJob_InvalidStatus(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-	j := newTestJobCommands(t, p.ID, "job-invalid", domain.Running, func(ctrl domain.FnControl) error { return nil }, p.Ctx)
+	j := newTestJobCommands(t, "job-invalid", domain.Running, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
 
 	err := p.AddJob(j)
 	assert.ErrorIs(t, err, errs.ErrJobWrongStatus)
@@ -71,7 +71,7 @@ func TestPoolCommands_AddJob_InvalidStatus(t *testing.T) {
 func TestPoolCommands_RemoveJob_Success(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-	j := newTestJobCommands(t, p.ID, "job-remove", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx)
+	j := newTestJobCommands(t, "job-remove", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
 
 	assert.NoError(t, p.AddJob(j))
 	err := p.RemoveJob("job-remove")
@@ -97,7 +97,7 @@ func TestPoolCommands_WorkFlowJob_Success(t *testing.T) {
 	resumed := make(chan struct{}, 1)
 	var err error
 	jID := "job-work-flow"
-	j := newTestJobCommands(t, p.ID, jID, domain.Waiting, func(ctrl domain.FnControl) error {
+	j := newTestJobCommands(t, jID, domain.Waiting, func(ctrl domain.FnControl) error {
 		for {
 			select {
 			case <-ctrl.PauseChan():
@@ -109,7 +109,7 @@ func TestPoolCommands_WorkFlowJob_Success(t *testing.T) {
 				time.Sleep(200 * time.Millisecond)
 			}
 		}
-	}, p.Ctx)
+	}, p.Ctx, p.Mon)
 
 	assert.NoError(t, p.AddJob(j))
 	go p.Run()
@@ -148,10 +148,10 @@ func TestPoolCommands_StopJob_Success(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
 
-	j := newTestJobCommands(t, p.ID, "job-stop", domain.Waiting, func(ctrl domain.FnControl) error {
+	j := newTestJobCommands(t, "job-stop", domain.Waiting, func(ctrl domain.FnControl) error {
 		<-ctrl.Context().Done()
 		return ctrl.Context().Err()
-	}, p.Ctx)
+	}, p.Ctx, p.Mon)
 	assert.NoError(t, p.AddJob(j))
 	go p.Run()
 	err := p.StopJob("job-stop")

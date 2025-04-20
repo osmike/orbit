@@ -1,3 +1,22 @@
+// Package job implements the core logic for scheduled task execution within the orbit library.
+//
+// A Job encapsulates everything required to define, execute, and monitor a scheduled task.
+// It supports interval-based and cron-based execution, lifecycle control (pause, resume, stop, retry),
+// runtime state tracking, and lifecycle hooks (OnStart, OnSuccess, OnError, Finally, etc.).
+//
+// Each Job exposes:
+//   - Fn: main execution function.
+//   - FnControl: runtime context passed to Fn, allowing data storage, pause/resume handling, and cancellation awareness.
+//   - StateDTO: internal state used to track execution metadata such as start time, end time, retries, errors, custom data, etc.
+//   - Monitoring: integration for saving metrics during job lifecycle transitions.
+//
+// The package provides:
+//   - Full lifecycle handling (start, monitor, finalize).
+//   - Retry mechanism with reset-on-success.
+//   - Thread-safe state management with fine-grained locking.
+//   - Isolation between control logic (FnControl) and state mutations (state).
+//
+// Jobs are created via the New function and scheduled for execution by the pool layer.
 package job
 
 import (
@@ -12,56 +31,53 @@ import (
 
 // Job represents a scheduled task managed and executed by the scheduler.
 //
-// It encapsulates the execution logic, scheduling parameters, lifecycle control,
-// runtime state, and associated metadata.
+// It encapsulates the job's execution function (Fn), configuration, lifecycle state,
+// context cancellation, pause/resume signaling, retry logic, and runtime metrics.
 type Job struct {
-	domain.JobDTO // Embedded configuration data provided at registration.
+	domain.JobDTO // Embedded job configuration provided during creation.
 
-	PoolID string
+	PoolID string // Optional: pool identifier if needed for grouping or routing.
 
-	ctx    context.Context    // Execution context for cancellation and timeouts.
-	cancel context.CancelFunc // Function to cancel execution.
+	ctx    context.Context    // Job-scoped context for cancellation and timeout control.
+	cancel context.CancelFunc // Cancels the job's context.
 
-	state *state       // Internal state tracking execution progress and metadata.
-	mu    sync.RWMutex // Protects concurrent access to mutable fields.
+	mon domain.Monitoring // Monitoring interface for metrics tracking.
 
-	pauseCh  chan struct{} // Channel for signaling pause events.
-	resumeCh chan struct{} // Channel for signaling resume events.
+	state *state       // Internal runtime state tracking job lifecycle and metrics.
+	mu    sync.RWMutex // Guards mutable configuration fields (e.g., Timeout).
 
-	doneCh chan struct{} // Channel indicating job availability for execution.
+	pauseCh  chan struct{} // Signals the job to pause execution.
+	resumeCh chan struct{} // Signals the job to resume from pause.
 
-	cron *CronSchedule // Parsed cron expression (if provided).
+	doneCh    chan struct{} // Used as a semaphore to prevent overlapping executions.
+	processCh chan struct{} // Guards against duplicate concurrent lifecycle transitions.
 
-	//currentRetry int        // Current retry attempt number.
-	ctrl *FnControl // Control interface passed to the job's main function.
+	cron *CronSchedule // Parsed cron expression if applicable.
 
-	processCh chan struct{}
+	ctrl *FnControl // Runtime control interface passed into the job's execution function.
 }
 
-// New creates and initializes a new Job instance based on the provided configuration and context.
+// New creates and initializes a new Job instance from the given JobDTO and context.
 //
-// Validation & Initialization steps:
-//   - Ensures required fields (ID, Fn) are present.
-//   - Defaults job Name to ID if empty.
-//   - Ensures mutually exclusive scheduling fields (Interval vs Cron).
-//   - Parses and validates cron expressions (if present).
-//   - Initializes timing bounds (StartAt, EndAt) and internal state.
+// Steps:
+//   - Validates configuration (ID, Fn, scheduling exclusivity).
+//   - Sets default values for Name, StartAt, and EndAt.
+//   - Parses Cron expression if provided.
+//   - Initializes state, channels, and internal control object.
 //
 // Parameters:
-//   - jobDTO: Job configuration object.
-//   - ctx: Parent context for job lifecycle.
+//   - jobDTO: Configuration settings for the job.
+//   - ctx: Parent context inherited from the scheduler.
+//   - mon: Monitoring implementation used for metrics reporting.
 //
 // Returns:
-//   - A pointer to the created Job instance.
-//   - An error if validation fails.
-func New(poolID string, jobDTO domain.JobDTO, ctx context.Context) (*Job, error) {
+//   - Pointer to a new Job instance.
+//   - Error if validation fails or initialization is inconsistent.
+func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job, error) {
 	job := &Job{
 		JobDTO: jobDTO,
 	}
-	if poolID == "" {
-		return nil, errs.New(errs.ErrEmptyID, fmt.Sprintf("pool id on job id - %s, job name- %s is empty", job.ID, job.Name))
-	}
-	job.PoolID = poolID
+
 	if job.ID == "" {
 		return nil, errs.New(errs.ErrEmptyID, fmt.Sprintf("job name - %s", job.Name))
 	}
@@ -91,7 +107,8 @@ func New(poolID string, jobDTO domain.JobDTO, ctx context.Context) (*Job, error)
 		return nil, errs.New(errs.ErrWrongTime, fmt.Sprintf("ending time cannot be before starting time, id: %s", job.ID))
 	}
 
-	job.state = newState(job.ID)
+	job.mon = mon
+	job.state = newState(job.ID, job.mon)
 	job.state.NextRun = nextRun
 	job.ctx, job.cancel = context.WithCancel(ctx)
 
@@ -104,135 +121,82 @@ func New(poolID string, jobDTO domain.JobDTO, ctx context.Context) (*Job, error)
 
 	job.ctrl = &FnControl{
 		ctx:        job.ctx,
-		data:       &sync.Map{},
 		pauseChan:  job.pauseCh,
 		resumeChan: job.resumeCh,
+		saveData:   job.state.UpdateData,
 	}
 
 	return job, nil
 }
 
-// GetMetadata returns the job's immutable configuration metadata.
-//
-// Returns:
-//   - The original JobDTO used to define the job.
+// GetMetadata returns the original job configuration (JobDTO).
 func (j *Job) GetMetadata() domain.JobDTO {
 	return j.JobDTO
 }
 
-// GetState returns the current state snapshot of the job.
-//
-// Returns:
-//   - A pointer to the StateDTO containing runtime execution metadata.
+// GetState returns a snapshot of the job's current execution state.
 func (j *Job) GetState() *domain.StateDTO {
 	return j.state.GetState()
 }
 
-// GetStatus retrieves the current execution status of the job.
-//
-// Returns:
-//   - The JobStatus (e.g., Waiting, Running, Completed, etc.).
+// GetStatus retrieves the job's current status (e.g., Waiting, Running).
 func (j *Job) GetStatus() domain.JobStatus {
 	return j.state.GetStatus()
 }
 
-// SetStatus sets the job’s current execution status explicitly.
-//
-// Parameters:
-//   - status: The new status to assign.
+// SetStatus forcefully sets the job's current status.
 func (j *Job) SetStatus(status domain.JobStatus) {
 	j.state.SetStatus(status)
 }
 
-func (j *Job) LockJob() bool {
-	select {
-	case j.processCh <- struct{}{}:
-		return true
-	default:
-		return false // already locked
-	}
-}
-
-func (j *Job) UnlockJob() {
-	select {
-	case <-j.processCh:
-	default:
-		// do nothing if already unlocked
-	}
-}
-
-// TrySetStatus attempts to change the job's status if its current status matches one of the allowed values.
-//
-// Parameters:
-//   - allowed: List of allowed current statuses.
-//   - status: Desired new status.
-//
-// Returns:
-//   - true if the transition was successful; false otherwise.
+// TrySetStatus attempts to transition to a new status if the current status
+// is within the allowed list. Returns true if the transition succeeds.
 func (j *Job) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) bool {
 	return j.state.TrySetStatus(allowed, status)
 }
 
-// UpdateState performs a partial update of the job’s internal state.
-//
-// Fields in the provided StateDTO will only be applied if non-zero (e.g., nil errors are ignored).
-//
-// Parameters:
-//   - state: Partial state update.
+// UpdateState applies a partial update to the job's internal state.
+// Only non-zero/non-nil fields in the provided StateDTO will be applied.
 func (j *Job) UpdateState(state domain.StateDTO) {
 	j.state.Update(state, false)
 }
 
-// UpdateStateStrict forcefully overwrites the job’s current state with all fields from the given StateDTO.
-//
-// This is useful for full-state replacements during restoration or forced overrides.
-//
-// Parameters:
-//   - state: Complete state object to replace the current one.
+// UpdateStateStrict performs a full overwrite of the job's current state
+// using all fields from the provided StateDTO.
 func (j *Job) UpdateStateStrict(state domain.StateDTO) {
 	j.state.Update(state, true)
 }
 
-// SaveUserDataToState transfers all runtime key-value data stored during execution
-// (via FnControl.SaveData) into the job state for later retrieval or monitoring.
-func (j *Job) SaveUserDataToState() {
-	result := make(map[string]interface{})
-	j.ctrl.data.Range(func(key, value interface{}) bool {
-		result[key.(string)] = value
-		return true
-	})
-	j.UpdateState(domain.StateDTO{
-		Data: result,
-	})
-}
-
-// SaveMetrics captures the job’s current runtime state and sends it to the provided Monitoring interface.
-//
-// Parameters:
-//   - mon: Monitoring interface that stores runtime metrics externally.
-func (j *Job) SaveMetrics(mon domain.Monitoring) {
-	j.SaveUserDataToState()
-	s := j.GetState()
-	mon.SaveMetrics(*s)
-}
-
-// SetTimeout updates the maximum allowed execution duration for the job.
-//
-// If the job exceeds this timeout, it may be forcefully stopped by the scheduler.
-//
-// Parameters:
-//   - timeout: Maximum allowed execution duration.
+// SetTimeout updates the job's execution timeout.
+// If exceeded, the job may be canceled during ProcessRun.
 func (j *Job) SetTimeout(timeout time.Duration) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.Timeout = timeout
 }
 
-// handleError processes a given error by categorizing it into hook-specific or execution-level error types,
-// and updating the job’s state accordingly.
-//
-// Parameters:
-//   - err: The error encountered during execution or hook invocation.
+// LockJob attempts to acquire an internal processing lock for lifecycle transitions.
+// Returns true if lock was acquired.
+func (j *Job) LockJob() bool {
+	select {
+	case j.processCh <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// UnlockJob releases the internal lifecycle lock.
+func (j *Job) UnlockJob() {
+	select {
+	case <-j.processCh:
+	default:
+		// Already unlocked
+	}
+}
+
+// handleError stores the given error in the appropriate part of the job state,
+// depending on whether it originates from a hook or general execution failure.
 func (j *Job) handleError(err error) {
 	if err == nil {
 		return

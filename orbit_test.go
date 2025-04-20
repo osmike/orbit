@@ -1,8 +1,8 @@
-package go_scheduler
+package orbit
 
 import (
 	"context"
-	errs "go-scheduler/internal/error" // было "error" — это Go keyword
+	errs "go-scheduler/internal/error"
 	"strconv"
 	"testing"
 	"time"
@@ -23,7 +23,6 @@ func TestSchedulerAPI(t *testing.T) {
 	var err error
 	for i := 0; i < 3; i++ {
 		err := err
-		poolID := "pool-" + strconv.Itoa(i)
 		jobID := "job-" + strconv.Itoa(i)
 
 		blockChan := make(chan struct{})
@@ -37,7 +36,6 @@ func TestSchedulerAPI(t *testing.T) {
 		}
 
 		p, err := scheduler.CreatePool(PoolConfig{
-			ID:            poolID,
 			MaxWorkers:    1,
 			CheckInterval: 10 * time.Millisecond,
 		}, nil)

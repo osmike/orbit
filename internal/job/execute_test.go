@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"go-scheduler/monitoring"
 	"testing"
 	"time"
 
@@ -15,8 +16,9 @@ import (
 func newExecutableJob(t *testing.T, hooks domain.Hooks, fn domain.Fn) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	mon := monitoring.New()
 
-	job, err := New("pool-id", domain.JobDTO{
+	job, err := New(domain.JobDTO{
 		ID:   "exec-job",
 		Name: "execution test",
 		Interval: domain.Interval{
@@ -24,7 +26,7 @@ func newExecutableJob(t *testing.T, hooks domain.Hooks, fn domain.Fn) *Job {
 		},
 		Fn:    fn,
 		Hooks: hooks,
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	return job
@@ -133,8 +135,8 @@ func TestJob_Execute_FinallyFails(t *testing.T) {
 
 func TestJob_Execute_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
-
-	job, err := New("pool-id", domain.JobDTO{
+	mon := monitoring.New()
+	job, err := New(domain.JobDTO{
 		ID:   "already-running",
 		Name: "test job",
 		Interval: domain.Interval{
@@ -144,7 +146,7 @@ func TestJob_Execute_AlreadyRunning(t *testing.T) {
 			time.Sleep(2 * time.Second)
 			return nil
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	go func() {
@@ -162,8 +164,8 @@ func TestJob_Execute_WithPauseAndResume(t *testing.T) {
 	t.Cleanup(cancel)
 
 	resumed := make(chan struct{}, 1)
-
-	job, err := New("pool-id", domain.JobDTO{
+	mon := monitoring.New()
+	job, err := New(domain.JobDTO{
 		ID:       "job-pause-resume",
 		Name:     "pause/resume job",
 		Interval: domain.Interval{Time: time.Second},
@@ -177,7 +179,7 @@ func TestJob_Execute_WithPauseAndResume(t *testing.T) {
 				return ctrl.Context().Err()
 			}
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	job.SetStatus(domain.Running)
@@ -203,8 +205,8 @@ func TestJob_Execute_WithPauseAndResume(t *testing.T) {
 func TestJob_Execute_StoppedDuringFn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-
-	job, err := New("pool-id", domain.JobDTO{
+	mon := monitoring.New()
+	job, err := New(domain.JobDTO{
 		ID:       "job-stop-test",
 		Name:     "job to stop",
 		Interval: domain.Interval{Time: time.Second},
@@ -216,7 +218,7 @@ func TestJob_Execute_StoppedDuringFn(t *testing.T) {
 				return nil
 			}
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	go func() {

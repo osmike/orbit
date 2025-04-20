@@ -3,83 +3,75 @@ package job
 import (
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
-	"sync"
 	"time"
 )
 
-// ProcessStart initializes and updates the job state at the beginning of job execution.
+// ProcessStart initializes the job's internal state at the beginning of execution.
 //
-// This method performs the following actions:
-//   - Records the exact start time of the job.
-//   - Resets job state fields (EndAt, ExecutionTime, Data) to their initial defaults.
-//   - Sets the job status explicitly to Running.
-//   - Initializes a new metadata storage (`sync.Map`) for runtime data.
-//   - Immediately saves initial metrics to the provided Monitoring interface.
-//
-// Parameters:
-//   - mon: Monitoring interface instance used for tracking job metrics.
-func (j *Job) ProcessStart(mon domain.Monitoring) {
+// This method performs:
+//   - Records the current timestamp as StartAt.
+//   - Resets execution-related fields (EndAt, ExecutionTime, Data).
+//   - Sets the job status to Running.
+//   - Prepares the state for clean metrics collection and data accumulation.
+func (j *Job) ProcessStart() {
 	startTime := time.Now()
 	j.UpdateStateStrict(domain.StateDTO{
 		StartAt:       startTime,
-		EndAt:         time.Time{},
 		Status:        domain.Running,
 		ExecutionTime: 0,
 		Data:          map[string]interface{}{},
 	})
-	j.ctrl.data = &sync.Map{} // Reset runtime metadata storage.
-	j.SaveMetrics(mon)
 }
 
-// ProcessEnd finalizes the job state upon job completion.
+// ProcessEnd finalizes the job after execution, saving timing and status metadata.
 //
-// It performs the following steps:
-//   - Updates the job state with the final execution status (e.g., Completed, Error).
-//   - Records the job's end timestamp and final execution duration.
-//   - Handles retry logic based on the job's Retry settings.
-//   - Captures any errors encountered during execution.
-//   - Saves final execution metrics via the Monitoring interface.
+// This method performs:
+//   - Records EndAt timestamp and calculates ExecutionTime.
+//   - Sets the final status (Completed, Error, Ended).
+//   - Increments Success or Failure counter.
+//   - Stores execution error if any.
+//   - Triggers graceful cleanup if status is Ended.
 //
 // Parameters:
-//   - status: The final execution status of the job.
-//   - err: Any error encountered during job execution (nil if successful).
-//   - mon: Monitoring interface instance used for final job metrics tracking.
-func (j *Job) ProcessEnd(status domain.JobStatus, err error, mon domain.Monitoring) {
+//   - status: Final job status (Completed, Error, or Ended).
+//   - err: Error encountered during execution, if any.
+func (j *Job) ProcessEnd(status domain.JobStatus, err error) {
 	if status == domain.Ended {
 		j.CloseChannels()
 	}
 	j.state.SetEndState(j.JobDTO.Retry.ResetOnSuccess, status, err)
-	j.SaveMetrics(mon)
 }
 
-// ProcessRun monitors the job's execution duration to ensure it stays within the configured timeout limit.
+// ProcessRun monitors job execution time to detect timeouts.
 //
-// This method should be invoked periodically during job execution to verify timeout constraints.
-//
-// It performs the following steps:
-//   - Updates the job's current execution duration.
-//   - Records interim metrics for monitoring purposes.
-//   - Checks if execution duration has exceeded the allowed timeout.
-//
-// Parameters:
-//   - mon: Monitoring interface instance used for real-time job metrics tracking.
+// This method should be called during execution (typically inside the pool),
+// and ensures the job hasn't exceeded its configured Timeout.
 //
 // Returns:
-//   - An ErrJobTimeout error if the job's execution exceeds the allowed timeout.
-//   - nil if the execution duration is within acceptable limits.
-func (j *Job) ProcessRun(mon domain.Monitoring) error {
+//   - ErrJobTimeout if execution exceeds Timeout.
+//   - nil if within time limit.
+func (j *Job) ProcessRun() error {
 	execTime := j.state.UpdateExecutionTime()
-	j.SaveMetrics(mon)
 	if time.Duration(execTime) > j.Timeout {
 		return errs.New(errs.ErrJobTimout, j.ID)
 	}
 	return nil
 }
 
-func (j *Job) ProcessError(mon domain.Monitoring) error {
+// ProcessError handles retry logic after a failed job execution.
+//
+// This method:
+//   - Attempts to retry the job using its Retry config.
+//   - If retry is exhausted or disabled, marks job as Ended and closes channels.
+//   - If retry is allowed, moves the job into Completed to await re-run.
+//
+// Returns:
+//   - An error indicating whether retry is allowed.
+//   - nil if retry is accepted and job will be rescheduled.
+func (j *Job) ProcessError() error {
 	err := j.Retry()
 	if err != nil {
-		j.ProcessEnd(domain.Ended, err, mon)
+		j.ProcessEnd(domain.Ended, err)
 		j.CloseChannels()
 		return err
 	}

@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"go-scheduler/monitoring"
 	"testing"
 	"time"
 
@@ -12,14 +13,15 @@ import (
 )
 
 func newTestJob(t *testing.T) *Job {
-	job, err := New("pool-id", domain.JobDTO{
+	mon := monitoring.New()
+	job, err := New(domain.JobDTO{
 		ID:   "test-job",
 		Name: "test",
 		Interval: domain.Interval{
 			Time: time.Minute,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
-	}, context.Background())
+	}, context.Background(), mon)
 	assert.NoError(t, err)
 	return job
 }

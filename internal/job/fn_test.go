@@ -2,32 +2,11 @@ package job
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
-
-func TestFnControl_SaveData(t *testing.T) {
-	ctrl := &FnControl{
-		data: &sync.Map{},
-	}
-
-	ctrl.SaveData(map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-	})
-
-	val1, ok1 := ctrl.data.Load("key1")
-	val2, ok2 := ctrl.data.Load("key2")
-
-	assert.True(t, ok1)
-	assert.Equal(t, "value1", val1)
-
-	assert.True(t, ok2)
-	assert.Equal(t, 123, val2)
-}
 
 func TestFnControl_Context(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

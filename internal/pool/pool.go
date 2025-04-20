@@ -1,8 +1,17 @@
+// Package pool provides the core scheduling and orchestration engine for job execution.
+//
+// It is responsible for:
+//   - Concurrent execution of scheduled jobs with respect to MaxWorkers.
+//   - Lifecycle management of jobs (waiting, running, completed, error).
+//   - Periodic polling of job states at configurable intervals.
+//   - Graceful shutdown and cleanup of job state and resources.
+//
+// Each pool operates as an independent execution unit, isolated via context for cancellation
+// and monitoring support.
 package pool
 
 import (
 	"context"
-	"fmt"
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
 	"sync"
@@ -31,16 +40,17 @@ type Job interface {
 	NextRun() time.Time
 
 	// ProcessStart marks the job's state as "Running", initializing execution metrics and metadata.
-	ProcessStart(mon domain.Monitoring)
+	ProcessStart()
 
 	// ProcessRun monitors the job during execution, checking for timeout conditions.
 	// Returns ErrJobTimeout if the job exceeds its configured timeout.
-	ProcessRun(mon domain.Monitoring) error
+	ProcessRun() error
 
 	// ProcessEnd finalizes the job state after execution completes, recording metrics and handling errors.
-	ProcessEnd(status domain.JobStatus, err error, mon domain.Monitoring)
+	ProcessEnd(status domain.JobStatus, err error)
 
-	ProcessError(mon domain.Monitoring) error
+	// ProcessError performs retry logic and updates the job state in case of failure.
+	ProcessError() error
 
 	// CanExecute checks if the job meets conditions required to start execution immediately.
 	// Returns an error indicating why execution is not allowed, or nil if eligible.
@@ -58,15 +68,11 @@ type Job interface {
 	// Resume resumes execution of a paused job, if applicable.
 	Resume() error
 
-	SaveMetrics(mon domain.Monitoring)
-
+	// LockJob acquires exclusive execution access to the job if it is available.
 	LockJob() bool
 
+	// UnlockJob releases exclusive execution access to the job.
 	UnlockJob()
-
-	Retry() error
-
-	GetState() *domain.StateDTO
 }
 
 // Pool manages scheduling, execution, lifecycle control, and concurrency of multiple jobs.
@@ -75,11 +81,11 @@ type Job interface {
 // to continuously check and execute jobs based on their defined schedules and states.
 type Pool struct {
 	domain.Pool                    // Configuration settings (max workers, check intervals, idle timeouts).
+	Mon         domain.Monitoring  // Monitoring implementation for capturing execution metrics.
 	jobs        sync.Map           // Concurrent-safe storage of active jobs.
 	Ctx         context.Context    // Execution context for the scheduler pool.
 	cancel      context.CancelFunc // Context cancellation function to gracefully stop the scheduler.
-	mon         domain.Monitoring  // Monitoring implementation for capturing execution metrics.
-	killed      bool
+	killed      bool               // Indicates whether the pool has been terminated.
 }
 
 // New initializes and configures a new Pool instance with provided settings.
@@ -93,10 +99,8 @@ type Pool struct {
 //
 // Returns:
 //   - A fully initialized Pool instance ready for execution.
+//   - An error if the configuration is invalid.
 func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) (*Pool, error) {
-	if cfg.ID == "" {
-		return nil, errs.ErrEmptyID
-	}
 	if cfg.MaxWorkers == 0 {
 		cfg.MaxWorkers = domain.DEFAULT_NUM_WORKERS
 	}
@@ -113,7 +117,7 @@ func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) (*Pool, er
 		Pool:   cfg,
 		Ctx:    ctx,
 		cancel: cancel,
-		mon:    mon,
+		Mon:    mon,
 		killed: false,
 	}, nil
 }
@@ -142,10 +146,14 @@ func (p *Pool) getJobByID(id string) (Job, error) {
 //   - Manages job lifecycle transitions (waiting, running, completed, error).
 //   - Controls concurrency using a semaphore to enforce MaxWorkers limits.
 //   - Ensures graceful shutdown by waiting for all active jobs to complete upon cancellation.
+//
+// Returns:
+//   - An error (ErrPoolShutdown) if the pool was previously terminated.
 func (p *Pool) Run() (err error) {
 	if p.killed {
-		return errs.New(errs.ErrPoolShutdown, fmt.Sprintf("pool id - %s", p.ID))
+		return errs.ErrPoolShutdown
 	}
+
 	go func() {
 		ticker := time.NewTicker(p.CheckInterval)
 		defer ticker.Stop()
@@ -156,20 +164,20 @@ func (p *Pool) Run() (err error) {
 		for {
 			select {
 			case <-p.Ctx.Done():
-
 				wg.Wait()
+
 				p.jobs.Range(func(key, value interface{}) bool {
 					job := value.(Job)
 					job.UpdateState(domain.StateDTO{
 						Status: domain.Stopped,
 						Error: domain.StateError{
-							JobError: errs.New(errs.ErrPoolShutdown, p.ID),
+							JobError: errs.ErrPoolShutdown,
 						},
 					})
-					p.mon.SaveMetrics(*job.GetState())
 					p.jobs.Delete(key)
 					return true
 				})
+
 				p.killed = true
 				err = errs.ErrPoolShutdown
 				return
@@ -192,10 +200,6 @@ func (p *Pool) Run() (err error) {
 			}
 		}
 	}()
+
 	return err
-}
-
-func (p *Pool) GetMetrics() map[string]interface{} {
-
-	return p.mon.GetMetrics()
 }

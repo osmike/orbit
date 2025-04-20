@@ -118,8 +118,7 @@ func PrintJobsInMonitoring(mon domain.Monitoring) {
 
 func TestPool_Run(t *testing.T) {
 	cfg := domain.Pool{
-		ID:            "new-pool",
-		MaxWorkers:    100,
+		MaxWorkers:    1001,
 		CheckInterval: 20 * time.Millisecond,
 		IdleTimeout:   5 * time.Second,
 	}
@@ -127,7 +126,7 @@ func TestPool_Run(t *testing.T) {
 	var err error
 
 	p, _ := New(context.Background(), cfg, mon)
-	for i := 1; i < 101; i++ {
+	for i := 1; i < 1000; i++ {
 		fn := func(ctrl domain.FnControl) error {
 			for {
 				select {
@@ -152,7 +151,7 @@ func TestPool_Run(t *testing.T) {
 			Fn:       fn,
 		}
 		var j *job.Job
-		j, err = job.New(p.ID, jCfg, p.Ctx)
+		j, err = job.New(jCfg, p.Ctx, p.Mon)
 		assert.NoError(t, err)
 		err = p.AddJob(j)
 		assert.NoError(t, err)

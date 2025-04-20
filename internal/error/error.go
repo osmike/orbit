@@ -5,82 +5,85 @@ import (
 	"fmt"
 )
 
-// ErrEmptyID indicates that a job or pool was created or requested without providing a valid ID.
+// ErrEmptyID is returned when a job or pool is created or referenced without a valid non-empty ID.
 var ErrEmptyID = errors.New("empty ID")
 
-// General errors related to job creation and validation.
+// Job definition and configuration errors.
 var (
-	// ErrIDExists occurs when attempting to create a job with an ID that already exists.
+	// ErrIDExists indicates that a job with the same ID already exists in the scheduler.
 	ErrIDExists = errors.New("job ID not unique")
 
-	// ErrEmptyFunction indicates that the job was defined without an associated function to execute.
+	// ErrEmptyFunction occurs when a job is defined without an executable function.
 	ErrEmptyFunction = errors.New("function is empty")
 
-	// ErrWrongTime occurs when provided job start or end times are logically incorrect (e.g., end before start).
+	// ErrWrongTime is returned when job start or end times are chronologically incorrect (e.g., end before start).
 	ErrWrongTime = errors.New("wrong time")
 
-	// ErrMixedScheduleType is returned when both interval and cron scheduling are specified simultaneously.
+	// ErrMixedScheduleType occurs when both interval and cron expressions are specified simultaneously.
 	ErrMixedScheduleType = errors.New("job schedule is only supported with one type of interval")
 
-	// ErrAddingJob indicates a generic failure during the addition of a new job to the scheduler.
+	// ErrAddingJob represents a general error while adding a job to the pool.
 	ErrAddingJob = errors.New("error adding job")
 
-	// ErrJobNotFound is returned when attempting to reference or manipulate a job that does not exist.
+	// ErrJobNotFound is returned when a requested job cannot be found in the pool.
 	ErrJobNotFound = errors.New("job not found")
 )
 
-// Pool and concurrency-related errors.
+// Pool and concurrency control errors.
 var (
-	// ErrTooManyJobs occurs when the scheduler reaches its maximum allowed number of concurrent jobs.
-	ErrTooManyJobs  = errors.New("too many jobs")
+	// ErrTooManyJobs indicates that the maximum number of concurrent jobs has been reached.
+	ErrTooManyJobs = errors.New("too many jobs")
+
+	// ErrPoolShutdown is returned when an operation is attempted on a pool that has already been shut down.
 	ErrPoolShutdown = errors.New("pool shutdown")
 )
 
-// Scheduling errors.
+// Scheduling-related validation errors.
 var (
-	// ErrInvalidCronExpression indicates the provided cron scheduling expression is invalid or malformed.
+	// ErrInvalidCronExpression occurs when a provided cron expression is invalid or cannot be parsed.
 	ErrInvalidCronExpression = errors.New("invalid cron expression")
 )
 
-// Job execution and runtime errors.
+// Runtime job execution and control errors.
 var (
-	// ErrJobPanicked indicates that a job execution encountered a panic condition.
+	// ErrJobPanicked indicates that the job encountered a panic during execution.
 	ErrJobPanicked = errors.New("job panicked")
 
-	// ErrJobTimout indicates that a job exceeded its specified execution timeout.
+	// ErrJobTimout is returned when a job exceeds its configured timeout duration.
 	ErrJobTimout = errors.New("job timed out")
 
-	// ErrJobExecution represents a general execution failure within a job's main function.
+	// ErrJobExecution represents a generic failure during job execution.
 	ErrJobExecution = errors.New("error in job execution")
 
-	// ErrJobWrongStatus occurs when a job is in an inappropriate state for the requested operation.
+	// ErrJobWrongStatus indicates that the job is in an invalid state for the requested operation.
 	ErrJobWrongStatus = errors.New("job with wrong status")
 
-	// ErrJobExecTooEarly occurs when the scheduler attempts to run a job before its scheduled start time.
+	// ErrJobExecTooEarly occurs when a job is triggered before its scheduled start time.
 	ErrJobExecTooEarly = errors.New("job execution too early")
 
-	// ErrJobExecAfterEnd occurs when the scheduler attempts to execute a job after its designated end time.
+	// ErrJobExecAfterEnd occurs when a job is triggered after its configured end time.
 	ErrJobExecAfterEnd = errors.New("job execution after end time")
 
-	// ErrJobPaused indicates that the operation attempted to pause an already paused job.
+	// ErrJobPaused indicates an attempt to pause a job that is already paused.
 	ErrJobPaused = errors.New("job is already paused")
 
-	// ErrJobStillRunning indicates a request to execute a job that is already running.
+	// ErrJobStillRunning is returned when trying to start a job that is currently executing.
 	ErrJobStillRunning = errors.New("job is still running")
 
-	// ErrJobRetryLimit is returned when a job exceeds its configured retry attempts after execution failures.
+	// ErrJobRetryLimit is returned when a job exceeds the configured retry limit.
 	ErrJobRetryLimit = errors.New("job retry limit reached")
 
-	// ErrJobNotRunning occurs when attempting to stop or pause a job that is not currently running.
+	// ErrJobNotRunning occurs when trying to stop or pause a job that is not currently running.
 	ErrJobNotRunning = errors.New("job is not running")
 
-	// ErrJobNotPausedOrStopped occurs when an operation intended for a paused or stopped job is attempted on an active job.
+	// ErrJobNotPausedOrStopped is returned when attempting to resume a job that is not paused or stopped.
 	ErrJobNotPausedOrStopped = errors.New("job is not paused or stopped")
 
+	// ErrRetryFlagNotActive indicates that retry is disabled for this job.
 	ErrRetryFlagNotActive = errors.New("retry flag is not active")
 )
 
-// Lifecycle hook errors.
+// Lifecycle hook execution errors.
 var (
 	// ErrFinallyHook indicates an error occurred during execution of the Finally hook.
 	ErrFinallyHook = errors.New("error in finally hook")
@@ -97,13 +100,22 @@ var (
 	// ErrOnResumeHook indicates an error occurred during execution of the OnResume hook.
 	ErrOnResumeHook = errors.New("error in resume hook")
 
+	// ErrOnErrorHook indicates an error occurred during execution of the OnError hook.
 	ErrOnErrorHook = errors.New("error in on error hook")
 
+	// ErrOnStopHook indicates an error occurred during execution of the OnStop hook.
 	ErrOnStopHook = errors.New("error in on stop hook")
 )
 
-// New wraps a given error with additional contextual information.
-// Useful for providing details such as Job IDs or execution specifics alongside base error messages.
+// New wraps the provided base error with additional context.
+// The resulting error will retain the original for use with errors.Is and errors.Unwrap.
+//
+// Parameters:
+//   - err: Base error to be wrapped.
+//   - str: Additional context message.
+//
+// Returns:
+//   - A new error that wraps the original with additional context.
 func New(err error, str string) error {
 	return fmt.Errorf("%w: %s", err, str)
 }

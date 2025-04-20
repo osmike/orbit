@@ -12,7 +12,8 @@ import (
 )
 
 func newTestJobForProcess(t *testing.T) *Job {
-	j, err := New("pool-id", domain.JobDTO{
+	mon := monitoring.New()
+	j, err := New(domain.JobDTO{
 		ID:       "test-job-process",
 		Name:     "process test",
 		Interval: domain.Interval{Time: time.Second},
@@ -21,16 +22,15 @@ func newTestJobForProcess(t *testing.T) *Job {
 			ctrl.SaveData(map[string]interface{}{"info": "start"})
 			return nil
 		},
-	}, context.Background())
+	}, context.Background(), mon)
 	assert.NoError(t, err)
 	return j
 }
 
 func TestJob_ProcessStart(t *testing.T) {
 	j := newTestJobForProcess(t)
-	mon := monitoring.New()
 
-	j.ProcessStart(mon)
+	j.ProcessStart()
 
 	state := j.GetState()
 	assert.Equal(t, domain.Running, state.Status)
@@ -39,18 +39,17 @@ func TestJob_ProcessStart(t *testing.T) {
 	assert.Zero(t, state.ExecutionTime)
 	assert.Empty(t, state.Data)
 
-	metrics := mon.GetMetrics()
+	metrics := j.mon.GetMetrics()
 	_, exists := metrics[j.ID]
 	assert.True(t, exists)
 }
 
 func TestJob_ProcessRun_NoTimeout(t *testing.T) {
 	j := newTestJobForProcess(t)
-	mon := monitoring.New()
 
-	j.ProcessStart(mon)
+	j.ProcessStart()
 	time.Sleep(50 * time.Millisecond)
-	err := j.ProcessRun(mon)
+	err := j.ProcessRun()
 
 	assert.NoError(t, err)
 	assert.Less(t, j.GetState().ExecutionTime, int64(j.Timeout))
@@ -58,11 +57,10 @@ func TestJob_ProcessRun_NoTimeout(t *testing.T) {
 
 func TestJob_ProcessRun_Timeout(t *testing.T) {
 	j := newTestJobForProcess(t)
-	mon := monitoring.New()
 
-	j.ProcessStart(mon)
+	j.ProcessStart()
 	time.Sleep(300 * time.Millisecond) // Exceeds Timeout
-	err := j.ProcessRun(mon)
+	err := j.ProcessRun()
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "job timed out")
@@ -70,19 +68,18 @@ func TestJob_ProcessRun_Timeout(t *testing.T) {
 
 func TestJob_ProcessEnd(t *testing.T) {
 	j := newTestJobForProcess(t)
-	mon := monitoring.New()
 
-	j.ProcessStart(mon)
+	j.ProcessStart()
 	time.Sleep(10 * time.Millisecond)
 
-	j.ProcessEnd(domain.Completed, nil, mon)
+	j.ProcessEnd(domain.Completed, nil)
 
 	state := j.GetState()
 	assert.Equal(t, domain.Completed, state.Status)
 	assert.True(t, !state.EndAt.IsZero())
 	assert.Greater(t, state.ExecutionTime, int64(0))
 
-	metrics := mon.GetMetrics()
+	metrics := j.mon.GetMetrics()
 	finalState, ok := metrics[j.ID].(domain.StateDTO)
 	assert.True(t, ok)
 	assert.Equal(t, domain.Completed, finalState.Status)

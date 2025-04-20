@@ -4,6 +4,7 @@ import (
 	"errors"
 	"go-scheduler/internal/domain"
 	errs "go-scheduler/internal/error"
+	"go-scheduler/monitoring"
 	"testing"
 	"time"
 
@@ -11,20 +12,23 @@ import (
 )
 
 func TestState_Init(t *testing.T) {
-	s := newState("job-123")
+	mon := monitoring.New()
+	s := newState("job-123", mon)
 	assert.Equal(t, "job-123", s.JobID)
 	assert.Equal(t, domain.Waiting, s.Status)
 	assert.NotNil(t, s.Data)
 }
 
 func TestState_SetAndGetStatus(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 	s.SetStatus(domain.Running)
 	assert.Equal(t, domain.Running, s.GetStatus())
 }
 
 func TestState_TrySetStatus(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 
 	s.SetStatus(domain.Waiting)
 	ok := s.TrySetStatus([]domain.JobStatus{domain.Waiting}, domain.Running)
@@ -37,7 +41,8 @@ func TestState_TrySetStatus(t *testing.T) {
 }
 
 func TestState_UpdateExecutionTime(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 	s.StartAt = time.Now()
 
 	time.Sleep(5 * time.Millisecond)
@@ -48,7 +53,8 @@ func TestState_UpdateExecutionTime(t *testing.T) {
 }
 
 func TestState_Update(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 
 	now := time.Now()
 	newState := domain.StateDTO{
@@ -71,7 +77,8 @@ func TestState_Update(t *testing.T) {
 }
 
 func TestState_GetState(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 	s.SetStatus(domain.Running)
 	st := s.GetState()
 	assert.Equal(t, domain.Running, st.Status)
@@ -79,7 +86,8 @@ func TestState_GetState(t *testing.T) {
 }
 
 func TestState_SetEndState_Valid(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 	s.SetStatus(domain.Running)
 	s.StartAt = time.Now()
 
@@ -96,7 +104,8 @@ func TestState_SetEndState_Valid(t *testing.T) {
 }
 
 func TestState_SetEndState_InvalidTransition(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 	s.SetStatus(domain.Completed) // illegal transition
 	s.StartAt = time.Now()
 
@@ -108,7 +117,8 @@ func TestState_SetEndState_InvalidTransition(t *testing.T) {
 }
 
 func TestState_SetEndState_ResetsRetry(t *testing.T) {
-	s := newState("job-1")
+	mon := monitoring.New()
+	s := newState("job-1", mon)
 	s.SetStatus(domain.Running)
 	s.StartAt = time.Now()
 

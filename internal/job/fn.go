@@ -2,73 +2,76 @@ package job
 
 import (
 	"context"
-	"sync"
 )
 
-// Fn defines the signature of functions executed by the scheduler.
-// Each scheduled job must implement this function.
+// Fn defines the signature of a job's main execution function.
+//
+// This function is invoked by the scheduler at runtime and represents
+// the core logic of a scheduled task.
 //
 // Parameters:
-//   - ctrl: Provides the job function with execution control, context management,
-//     pause/resume signaling, and metadata storage capabilities.
+//   - ctrl: FnControl instance providing access to execution context, pause/resume
+//     signaling, and runtime metadata storage.
 //
 // Returns:
-//   - An error if the job execution fails; otherwise, nil upon successful completion.
+//   - An error if the job execution fails, or nil on successful completion.
 type Fn func(ctrl FnControl) error
 
-// FnControl provides execution control mechanisms, runtime context,
-// pause/resume signaling, and metadata storage for a job function (Fn).
+// FnControl provides the job's execution function (Fn) with control mechanisms,
+// lifecycle coordination, and runtime metadata handling.
 //
-// It enables job functions to manage their lifecycle effectively by:
-//   - Accessing the execution context to handle cancellations and timeouts.
-//   - Responding to pause and resume signals.
-//   - Storing and retrieving arbitrary job-specific data.
+// It exposes capabilities for:
+//   - Context management (cancellation, timeout).
+//   - Pause/resume signaling support.
+//   - Saving runtime key-value data for inspection or lifecycle hooks.
 type FnControl struct {
-	// ctx is the execution context for the job, allowing cancellation detection.
-	// The context may be canceled due to scheduler shutdown, manual termination,
-	// or exceeding the configured job timeout.
-	ctx context.Context
-
-	// pauseChan signals the job to pause execution. When the job function receives
-	// a message on this channel, it should transition into a paused state.
-	pauseChan chan struct{}
-
-	// resumeChan signals a previously paused job to resume execution. When the job
-	// function receives a message on this channel, it can safely resume processing.
-	resumeChan chan struct{}
-
-	// data stores custom key-value metadata generated or used by the job during execution.
-	// This is useful for persisting execution state, debugging, logging, or reporting metrics.
-	data *sync.Map
+	ctx        context.Context              // Execution context (cancellable by timeout or external stop)
+	pauseChan  chan struct{}                // Signal to pause job execution
+	resumeChan chan struct{}                // Signal to resume a paused job
+	saveData   func(map[string]interface{}) // Internal callback for saving metadata to job state
 }
 
-// SaveData stores custom runtime metadata for the job execution.
+// SaveData stores custom key-value data generated during job execution.
 //
-// The stored data is accessible throughout the job's lifecycle and can be
-// leveraged by lifecycle hooks (OnStart, OnSuccess, etc.) or for post-execution analysis.
+// This metadata becomes part of the job's execution state and is retained
+// across lifecycle hooks and monitoring systems.
 //
 // Parameters:
-//   - data: Key-value pairs representing custom metadata or execution state information.
+//   - data: Map of user-defined runtime data to persist.
 func (ctrl *FnControl) SaveData(data map[string]interface{}) {
-	for k, v := range data {
-		ctrl.data.Store(k, v)
-	}
+	ctrl.saveData(data)
 }
 
-// Context returns the job's execution context, which can be used to monitor
-// cancellation or timeouts due to scheduler shutdown, manual stop, or time limits.
+// Context returns the execution context associated with this job.
+//
+// The context is used to monitor cancellation or timeout events
+// triggered by scheduler shutdown or job configuration limits.
+//
+// Returns:
+//   - context.Context instance for cancellation awareness.
 func (ctrl *FnControl) Context() context.Context {
 	return ctrl.ctx
 }
 
-// PauseChan returns the channel used to signal that the job should pause.
-// The job function should monitor this channel and suspend processing when a signal is received.
+// PauseChan exposes the channel used to notify a job that it should pause.
+//
+// Job functions should monitor this channel and enter a paused state
+// upon receiving a signal (e.g., via select-case).
+//
+// Returns:
+//   - <-chan struct{}: read-only pause signal channel.
 func (ctrl *FnControl) PauseChan() <-chan struct{} {
 	return ctrl.pauseChan
 }
 
-// ResumeChan returns the channel used to signal that a paused job should resume execution.
-// The job should monitor this channel and continue execution when a signal is received.
+// ResumeChan provides a channel that signals when a paused job should resume.
+//
+// This wrapper around the internal resume channel ensures that if the context
+// is canceled while the job is paused, the resume channel will also be closed
+// to prevent goroutine leaks.
+//
+// Returns:
+//   - <-chan struct{}: read-only channel for resume signaling.
 func (ctrl *FnControl) ResumeChan() <-chan struct{} {
 	out := make(chan struct{})
 

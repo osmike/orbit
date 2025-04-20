@@ -1,8 +1,52 @@
-package go_scheduler
+// Package orbit provides a high-level abstraction for scheduling and executing concurrent jobs
+// with support for retries, timeouts, interval and cron-based scheduling, and detailed lifecycle management.
+//
+// It exposes a user-friendly API for creating execution pools, registering jobs with customizable behavior,
+// and tracking runtime state using pluggable monitoring implementations.
+//
+// Features:
+//   - Configurable execution pools with worker limits and polling intervals.
+//   - Job scheduling using fixed intervals or cron expressions.
+//   - Per-job lifecycle hooks (onStart, onSuccess, onError, onPause, onResume, finally).
+//   - Retry policies with retry limits and cooldown intervals.
+//   - Timeout control and pause/resume support.
+//   - Isolated runtime state and metadata tracking for each job.
+//   - Integration with in-memory or user-provided monitoring backends.
+//
+// This package is intended to be used by applications that require consistent and controlled background task
+// execution, periodic health checks, message dispatchers, or batch processing routines.
+//
+// Example usage:
+//
+//	s := go_scheduler.New(context.Background())
+//
+//	poolCfg := go_scheduler.PoolConfig{
+//		ID:           "analytics-pool",
+//		MaxWorkers:   10,
+//		CheckInterval: 200 * time.Millisecond,
+//	}
+//
+//	pool, _ := s.CreatePool(poolCfg, nil)
+//
+//	jobCfg := go_scheduler.JobConfig{
+//		ID: "report-job",
+//		Fn: func(ctrl go_scheduler.FnControl) error {
+//			// perform some logic...
+//			ctrl.SaveData(map[string]interface{}{"result": "ok"})
+//			return nil
+//		},
+//		Interval: go_scheduler.IntervalConfig{Time: 5 * time.Second},
+//		Retry:    go_scheduler.RetryConfig{Count: 3, Time: 1 * time.Second},
+//	}
+//
+//	s.AddJob(pool, jobCfg)
+package orbit
 
 import (
 	"context"
+	"fmt"
 	"go-scheduler/internal/domain"
+	errs "go-scheduler/internal/error"
 	"go-scheduler/internal/job"
 	"go-scheduler/internal/pool"
 	defaultMonitoring "go-scheduler/monitoring"
@@ -145,9 +189,9 @@ func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) (*Pool, error) {
 //   - nil on successful addition.
 //   - Error describing the failure reason otherwise.
 func (s *Scheduler) AddJob(pool *Pool, cfg JobConfig) error {
-	j, err := job.New(pool.ID, cfg, pool.Ctx)
+	j, err := job.New(cfg, pool.Ctx, pool.Mon)
 	if err != nil {
-		return err
+		return errs.New(errs.ErrAddingJob, fmt.Sprintf("err - %v", err))
 	}
 	return pool.AddJob(j)
 }

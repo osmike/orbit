@@ -8,24 +8,23 @@ import (
 	"sync"
 )
 
-// execute runs a specified job asynchronously, respecting scheduling constraints and concurrency limits.
+// execute schedules and executes a job in a separate goroutine, respecting pool constraints and job validity.
 //
-// The execution workflow includes:
-//  1. Checking job eligibility via CanExecute():
-//     - If the job is scheduled for a future time, execution is skipped.
-//     - If the job's scheduled execution period has passed, it is marked as Ended.
-//     - If the job is in an invalid state, it is marked as Error.
-//  2. Acquiring a semaphore slot to respect the configured maximum concurrency (MaxWorkers):
-//     - If a slot isn't available within a predefined timeout (5s), the job fails with ErrTooManyJobs.
-//  3. Executing the job safely in a goroutine:
-//     - Captures and handles panics, preventing scheduler-wide crashes.
-//     - Updates job status and records metrics before, during, and after execution.
-//  4. Ensuring proper synchronization via the provided WaitGroup.
+// Execution flow:
+//  1. Validates job readiness via CanExecute():
+//     - Skips execution if job is not yet due (ErrJobExecTooEarly).
+//     - If the job is ineligible due to timing or status issues, execution is skipped or state is updated.
+//  2. Acquires a semaphore slot to enforce MaxWorkers limit.
+//     - If no slot is available, job execution is postponed until one frees up.
+//  3. Spawns a new goroutine to run the job:
+//     - Calls job.Execute(), handling errors and panics.
+//     - Calls ProcessEnd() with final status and error for proper cleanup.
+//  4. Ensures synchronization with WaitGroup.
 //
 // Parameters:
-//   - job: The job instance to be executed.
-//   - sem: A buffered channel serving as a semaphore to enforce concurrency limits.
-//   - wg: A WaitGroup instance to manage execution synchronization.
+//   - job: Job to be executed.
+//   - sem: Semaphore channel limiting concurrent executions to MaxWorkers.
+//   - wg: WaitGroup used to wait for all job executions to complete.
 func (p *Pool) execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 	meta := job.GetMetadata()
 
@@ -33,34 +32,28 @@ func (p *Pool) execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 		err    error
 		status = domain.Completed
 	)
+
+	// Validate job eligibility for execution.
 	execErr := job.CanExecute()
 	if errors.Is(execErr, errs.ErrJobExecTooEarly) {
 		return
 	}
 
-	// Track the job execution via WaitGroup.
-	wg.Add(1)
+	wg.Add(1) // Register this job in the WaitGroup.
 
 	go func() {
-		// Defer finalization logic to ensure cleanup, semaphore release, and metrics updates.
 		defer func() {
-			// Release the semaphore slot after execution.
-			<-sem
+			<-sem // Release the worker slot.
 
-			// Recover from potential panics during job execution.
 			if r := recover(); r != nil {
 				status = domain.Error
 				err = errs.New(errs.ErrJobPanicked, fmt.Sprintf("panic: %v, job id: %s", r, meta.ID))
 			}
 
-			// Mark the job as completed with the final status and record metrics.
-			job.ProcessEnd(status, err, p.mon)
-
-			// Indicate that the job has fully completed.
-			wg.Done()
+			job.ProcessEnd(status, err)
+			wg.Done() // Mark job as done in WaitGroup.
 		}()
 
-		// Execute the job's main function, handle execution errors.
 		err = job.Execute()
 		if err != nil {
 			status = domain.Error

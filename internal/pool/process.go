@@ -61,7 +61,7 @@ func (p *Pool) processWaiting(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 	nextRun := job.NextRun()
 	if time.Now().After(nextRun) || time.Now().Equal(nextRun) {
 		// Mark the job as started, update metrics.
-		job.ProcessStart(p.mon)
+		job.ProcessStart()
 
 		p.execute(job, sem, wg)
 	} else {
@@ -81,9 +81,9 @@ func (p *Pool) processWaiting(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 // Parameters:
 //   - job: The Job instance currently executing.
 func (p *Pool) processRunning(job Job) {
-	err := job.ProcessRun(p.mon)
+	err := job.ProcessRun()
 	if err != nil {
-		job.ProcessEnd(domain.Error, err, p.mon)
+		job.ProcessEnd(domain.Error, err)
 	}
 }
 
@@ -104,7 +104,7 @@ func (p *Pool) processCompleted(job Job) {
 		})
 		return
 	}
-	job.ProcessEnd(domain.Ended, nil, p.mon)
+	job.ProcessEnd(domain.Ended, nil)
 }
 
 // processError manages jobs that have encountered an error during execution.
@@ -115,12 +115,6 @@ func (p *Pool) processCompleted(job Job) {
 //
 // Parameters:
 //   - job: The Job instance currently in an Error state.
-func (p *Pool) processError(job Job) {
-	err := job.Retry()
-	if err != nil {
-		return
-	}
-	job.UpdateState(domain.StateDTO{
-		Status: domain.Waiting,
-	})
+func (p *Pool) processError(job Job) error {
+	return job.ProcessError()
 }

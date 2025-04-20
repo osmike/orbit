@@ -6,16 +6,15 @@ import (
 	"time"
 )
 
-// CanExecute evaluates whether the job is eligible to start execution based on current state and configured constraints.
+// CanExecute evaluates whether the job is eligible for execution based on scheduling constraints and current status.
 //
-// This method performs the following validation checks:
-//   - Ensures the job is currently in the Waiting state and not already running.
-//   - Verifies that the current time has reached or passed the scheduled StartAt time.
-//   - Ensures the current time has not exceeded the job's configured EndAt deadline.
+// Validation checks include:
+//   - The job must be in the Waiting state.
+//   - The current time must be after StartAt and before EndAt.
 //
 // Returns:
-//   - nil if the job can proceed with execution.
-//   - An appropriate error (ErrJobWrongStatus, ErrJobExecTooEarly, ErrJobExecAfterEnd) if execution conditions are not met.
+//   - nil if the job is eligible for execution.
+//   - A wrapped error indicating the reason why execution is not allowed.
 func (j *Job) CanExecute() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -35,15 +34,14 @@ func (j *Job) CanExecute() error {
 	return nil
 }
 
-// NextRun computes the next scheduled execution time for the job based on its scheduling configuration.
+// NextRun determines the job's next scheduled execution time.
 //
-// Scheduling modes supported:
-//   - Cron-based: calculates the next execution time based on a cron expression.
-//   - Time-based: calculates the next execution time based on a fixed interval from the last execution.
+// Logic:
+//   - If the job uses cron syntax, calculates next run from the cron schedule.
+//   - If using a fixed interval, adds interval to the last StartAt time.
 //
 // Returns:
-//   - The next scheduled execution time as a time.Time instance.
-//   - If the calculated next execution is in the past, it returns the current time to trigger immediate execution.
+//   - The calculated time of next execution attempt.
 func (j *Job) NextRun() time.Time {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -52,18 +50,19 @@ func (j *Job) NextRun() time.Time {
 		return j.cron.NextRun()
 	}
 
-	next := j.state.StartAt.Add(j.Interval.Time)
-
-	return next
+	return j.state.StartAt.Add(j.Interval.Time)
 }
 
-// Retry increments the job's retry counter and verifies whether the retry limit has been exceeded.
+// Retry increments the job's retry counter and evaluates retry eligibility.
 //
-// It must be called after a job fails execution to determine whether another execution attempt should occur.
+// Logic:
+//   - If retrying is disabled, returns ErrRetryFlagNotActive.
+//   - If max retry count is reached, returns ErrJobRetryLimit.
+//   - If unlimited retries (Count = 0), allows retry indefinitely.
 //
 // Returns:
-//   - ErrJobRetryLimit if the maximum retry limit is reached, indicating no further retries should occur.
-//   - nil if the job is allowed another execution attempt.
+//   - nil if retry is permitted.
+//   - Error if retrying is disallowed or exhausted.
 func (j *Job) Retry() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -79,12 +78,17 @@ func (j *Job) Retry() error {
 	if j.state.currentRetry >= j.JobDTO.Retry.Count {
 		return errs.New(errs.ErrJobRetryLimit, j.ID)
 	}
+
 	j.state.currentRetry++
 	return nil
 }
 
+// CloseChannels terminates all internal job channels safely and cancels the job context.
+//
+// This method is used during graceful shutdown or finalization. It recovers from
+// any panics caused by closing already-closed channels.
 func (j *Job) CloseChannels() {
-	defer func() { // closing channels with recover
+	defer func() {
 		recover()
 		j.cancel()
 	}()

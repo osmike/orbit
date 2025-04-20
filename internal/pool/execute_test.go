@@ -13,12 +13,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestJobExecute(t *testing.T, poolID string, id string, fn domain.Fn, status domain.JobStatus, ctx context.Context) *job.Job {
-	j, err := job.New(poolID, domain.JobDTO{
+func newTestJobExecute(t *testing.T, id string, fn domain.Fn, status domain.JobStatus, ctx context.Context, mon domain.Monitoring) *job.Job {
+
+	j, err := job.New(domain.JobDTO{
 		ID:       id,
 		Interval: domain.Interval{Time: 10 * time.Millisecond},
 		Fn:       fn,
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 	j.SetStatus(status)
 	return j
@@ -29,7 +30,6 @@ func newTestPoolExecute(t *testing.T) *Pool {
 
 	p := &Pool{}
 	cfg := domain.Pool{
-		ID:            "new-pool",
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}
@@ -47,10 +47,10 @@ func TestExecute_Success(t *testing.T) {
 
 	done := make(chan struct{})
 
-	j := newTestJobExecute(t, p.ID, "exec-success", func(ctrl domain.FnControl) error {
+	j := newTestJobExecute(t, "exec-success", func(ctrl domain.FnControl) error {
 		done <- struct{}{}
 		return nil
-	}, domain.Waiting, p.Ctx)
+	}, domain.Waiting, p.Ctx, p.Mon)
 
 	p.execute(j, sem, wg)
 
@@ -71,9 +71,9 @@ func TestExecute_TooEarly(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, 1)
 
-	j := newTestJobExecute(t, p.ID, "exec-too-early", func(ctrl domain.FnControl) error {
+	j := newTestJobExecute(t, "exec-too-early", func(ctrl domain.FnControl) error {
 		return nil
-	}, domain.Waiting, p.Ctx)
+	}, domain.Waiting, p.Ctx, p.Mon)
 	j.StartAt = time.Now().Add(2 * time.Second)
 
 	p.execute(j, sem, wg)
@@ -87,9 +87,9 @@ func TestExecute_InvalidStatus(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{}
-	j := newTestJobExecute(t, p.ID, "exec-wrong-status", func(ctrl domain.FnControl) error {
+	j := newTestJobExecute(t, "exec-wrong-status", func(ctrl domain.FnControl) error {
 		return nil
-	}, domain.Completed, p.Ctx)
+	}, domain.Completed, p.Ctx, p.Mon)
 
 	p.execute(j, sem, wg)
 	wg.Wait()
@@ -104,9 +104,9 @@ func TestExecute_PanicRecovery(t *testing.T) {
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{}
 
-	j := newTestJobExecute(t, p.ID, "exec-panic", func(ctrl domain.FnControl) error {
+	j := newTestJobExecute(t, "exec-panic", func(ctrl domain.FnControl) error {
 		panic("unexpected panic in job")
-	}, domain.Waiting, p.Ctx)
+	}, domain.Waiting, p.Ctx, p.Mon)
 
 	p.execute(j, sem, wg)
 	wg.Wait()

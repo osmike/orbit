@@ -5,7 +5,6 @@ import "time"
 // Pool represents configuration settings for managing the execution environment of scheduled jobs.
 // It controls worker concurrency, resource usage, and job-checking frequency.
 type Pool struct {
-	ID string
 	// IdleTimeout specifies the duration after which a job that remains idle
 	// (not executed or scheduled for immediate execution) will be marked as inactive.
 	// This helps optimize resource usage and prevents accumulation of stale tasks.

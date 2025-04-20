@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"go-scheduler/monitoring"
 	"testing"
 	"time"
 
@@ -14,8 +15,9 @@ import (
 func newRunningJobWithoutPauseHandler(t *testing.T) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	mon := monitoring.New()
 
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "test-pause-no-handler",
 		Name: "job without pause handler",
 		Interval: domain.Interval{
@@ -27,7 +29,7 @@ func newRunningJobWithoutPauseHandler(t *testing.T) *Job {
 				return ctrl.Context().Err()
 			}
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 	j.SetStatus(domain.Running)
 	return j
@@ -36,8 +38,9 @@ func newRunningJobWithoutPauseHandler(t *testing.T) *Job {
 func newRunningJobWithPauseHandler(t *testing.T) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	mon := monitoring.New()
 
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "test-pause",
 		Name: "pause handler job",
 		Interval: domain.Interval{
@@ -51,7 +54,7 @@ func newRunningJobWithPauseHandler(t *testing.T) *Job {
 				return ctrl.Context().Err()
 			}
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 	j.SetStatus(domain.Running)
 	return j
@@ -93,8 +96,9 @@ func TestJob_Resume_FromPaused(t *testing.T) {
 	defer cancel()
 
 	resumed := make(chan struct{})
+	mon := monitoring.New()
 
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "resume-paused",
 		Name: "job that handles pause/resume",
 		Interval: domain.Interval{
@@ -112,7 +116,7 @@ func TestJob_Resume_FromPaused(t *testing.T) {
 				}
 			}
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Running)
@@ -139,8 +143,9 @@ func TestJob_EndedContext_FromResumed(t *testing.T) {
 	defer cancel()
 
 	resumed := make(chan struct{})
+	mon := monitoring.New()
 
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "context-ended-in-resume",
 		Name: "job that handles handle context end while paused",
 		Interval: domain.Interval{
@@ -158,7 +163,7 @@ func TestJob_EndedContext_FromResumed(t *testing.T) {
 				}
 			}
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Running)
@@ -181,15 +186,16 @@ func TestJob_EndedContext_FromResumed(t *testing.T) {
 }
 
 func TestJob_Resume_FromStopped(t *testing.T) {
+	mon := monitoring.New()
 	ctx := context.Background()
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "resume-stopped",
 		Name: "resume stopped job",
 		Interval: domain.Interval{
 			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Stopped)
@@ -199,15 +205,16 @@ func TestJob_Resume_FromStopped(t *testing.T) {
 }
 
 func TestJob_Resume_FromInvalidState(t *testing.T) {
+	mon := monitoring.New()
 	ctx := context.Background()
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "resume-invalid",
 		Name: "resume invalid state job",
 		Interval: domain.Interval{
 			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Completed)
@@ -216,15 +223,16 @@ func TestJob_Resume_FromInvalidState(t *testing.T) {
 }
 
 func TestJob_Stop_Transitions(t *testing.T) {
+	mon := monitoring.New()
 	ctx := context.Background()
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "stop-running",
 		Name: "stop transition job",
 		Interval: domain.Interval{
 			Time: time.Second,
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Running)
@@ -238,8 +246,9 @@ func TestJob_Stop_Transitions(t *testing.T) {
 func TestJob_Stop_WithHook(t *testing.T) {
 	var hookCalled bool
 	ctx := context.Background()
+	mon := monitoring.New()
 
-	j, err := New("pool-id", domain.JobDTO{
+	j, err := New(domain.JobDTO{
 		ID:   "stop-hook",
 		Name: "job with stop hook",
 		Interval: domain.Interval{
@@ -255,7 +264,7 @@ func TestJob_Stop_WithHook(t *testing.T) {
 				IgnoreError: false,
 			},
 		},
-	}, ctx)
+	}, ctx, mon)
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Paused)

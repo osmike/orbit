@@ -10,62 +10,59 @@ import (
 
 // state represents the internal, thread-safe runtime state of a scheduled job.
 //
-// It captures and synchronizes key execution metadata, such as start and end timestamps,
-// status, execution time, errors, user-defined data, and retry attempts.
-// This struct is not exposed directly outside the job package.
+// It manages execution timestamps, status transitions, retry attempts, custom job data,
+// and error tracking. All operations are guarded by mutexes to ensure concurrency safety.
 type state struct {
-	domain.StateDTO // Embedded data transfer object for simplified state export.
-
-	mu sync.RWMutex // Guards all state fields for concurrent access.
-
-	currentRetry int64 // Tracks the number of retry attempts made for this job.
+	domain.StateDTO // Embedded state DTO for simplified access.
+	mu              sync.RWMutex
+	currentRetry    int64             // Tracks how many retries have been performed.
+	mon             domain.Monitoring // Monitoring implementation for metric tracking.
 }
 
-// newState initializes and returns a new job execution state instance.
+// newState initializes a new state instance with default values and monitoring support.
 //
 // Parameters:
-//   - id: The unique job identifier to associate with the state.
+//   - jobId: Unique identifier for the job.
+//   - mon: Monitoring system to which state updates are reported.
 //
 // Returns:
-//   - A pointer to the initialized state, with default status (Waiting) and empty data map.
-func newState(jobId string) *state {
+//   - A pointer to a fully initialized state.
+func newState(jobId string, mon domain.Monitoring) *state {
 	return &state{
 		StateDTO: domain.StateDTO{
 			JobID:  jobId,
 			Status: domain.Waiting,
 			Data:   make(map[string]interface{}),
 		},
+		mon: mon,
 	}
 }
 
-// SetStatus sets the current job execution status in a thread-safe manner.
+// SetStatus updates the job's execution status.
 //
-// Parameters:
-//   - status: The new status to assign to the job (e.g., Running, Error, etc.).
+// Also sends metrics to the monitoring system after setting the status.
 func (s *state) SetStatus(status domain.JobStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Status = status
+	s.mon.SaveMetrics(s.StateDTO)
 }
 
-// GetStatus retrieves the current job execution status in a thread-safe manner.
-//
-// Returns:
-//   - The current job status.
+// GetStatus retrieves the current job status in a thread-safe manner.
 func (s *state) GetStatus() domain.JobStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Status
 }
 
-// TrySetStatus attempts to update the job status if its current status matches one of the allowed values.
+// TrySetStatus attempts to change the status only if the current status is in the allowed list.
 //
 // Parameters:
-//   - allowed: List of acceptable current statuses for transition.
-//   - status: The desired new status.
+//   - allowed: List of acceptable current statuses.
+//   - status: New status to set if transition is allowed.
 //
 // Returns:
-//   - true if the status was updated successfully; false otherwise.
+//   - true if the status was successfully updated.
 func (s *state) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,38 +70,48 @@ func (s *state) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus
 	for _, allowedStatus := range allowed {
 		if s.Status == allowedStatus {
 			s.Status = status
+			s.mon.SaveMetrics(s.StateDTO)
 			return true
 		}
 	}
 	return false
 }
 
-// UpdateExecutionTime recalculates and updates the execution duration
-// as the time elapsed since StartAt, in nanoseconds.
+// UpdateExecutionTime calculates and updates execution duration since StartAt.
 //
-// Returns:
-//   - The updated execution time.
+// Also pushes the updated state to the monitoring system.
 func (s *state) UpdateExecutionTime() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
+	s.mon.SaveMetrics(s.StateDTO)
 	return s.ExecutionTime
 }
 
-// Update applies the provided StateDTO to the current state.
+// UpdateData applies key-value pairs to the job's custom metadata.
 //
-// In non-strict mode:
-//   - Only non-zero or non-empty fields from the input will overwrite existing values.
+// Also triggers metric storage after modification.
+func (s *state) UpdateData(data map[string]interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for k, v := range data {
+		s.Data[k] = v
+	}
+	s.mon.SaveMetrics(s.StateDTO)
+}
+
+// Update applies a partial or full state update from the provided DTO.
 //
-// In strict mode:
-//   - All fields in the current state will be fully overwritten.
+// In strict mode, all fields are overwritten. In non-strict mode, only non-zero fields are updated.
 //
 // Parameters:
-//   - state: StateDTO containing updated fields.
-//   - strict: Whether to overwrite all fields unconditionally.
+//   - state: New values to apply to the state.
+//   - strict: Whether to overwrite all fields or merge selectively.
 func (s *state) Update(state domain.StateDTO, strict bool) {
 	s.mu.Lock()
+	defer s.mon.SaveMetrics(s.StateDTO)
 	defer s.mu.Unlock()
 
 	if strict {
@@ -144,18 +151,12 @@ func (s *state) Update(state domain.StateDTO, strict bool) {
 	if state.Failure > 0 {
 		s.Failure = state.Failure
 	}
-	if state.Success > 0 {
-		s.Success = state.Success
-	}
-	if state.Failure > 0 {
-		s.Failure = state.Failure
-	}
 }
 
-// GetState returns a safe, read-only snapshot of the current state.
+// GetState returns a snapshot of the current job state.
 //
 // Returns:
-//   - A copy of the current StateDTO with all available execution data.
+//   - A pointer to a cloned StateDTO, safe for external read-only access.
 func (s *state) GetState() *domain.StateDTO {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -174,16 +175,14 @@ func (s *state) GetState() *domain.StateDTO {
 	}
 }
 
-// SetEndState finalizes the job's state after execution ends,
-// updating timing, execution duration, final status, and error information.
+// SetEndState finalizes the job's execution and updates its result state.
 //
-// If the current status is not in [Running, Waiting], it is replaced with Error,
-// and a corresponding error is recorded in JobError.
-//
-// Parameters:
-//   - resOnSuccess: Whether to reset the retry counter on successful completion.
-//   - status: The final job status to set (e.g., Completed, Error).
-//   - err: The execution error, if any.
+// This method:
+//   - Calculates final execution time.
+//   - Detects invalid status transitions (e.g., if job was not running).
+//   - Increments retry or success/failure counters accordingly.
+//   - Stores any execution error for diagnostics.
+//   - Reports final state to monitoring.
 func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -191,12 +190,12 @@ func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err erro
 	s.EndAt = time.Now()
 	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
 
-	// Invalid state transition handling
 	if !(s.Status == domain.Running || s.Status == domain.Waiting) {
 		s.Error.JobError = errs.New(errs.ErrJobWrongStatus,
 			fmt.Sprintf("wrong status transition from %s to %s", s.Status, status),
 		)
 		s.Status = domain.Error
+		s.mon.SaveMetrics(s.StateDTO)
 		return
 	}
 
@@ -213,4 +212,5 @@ func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err erro
 	} else {
 		s.Failure++
 	}
+	s.mon.SaveMetrics(s.StateDTO)
 }
