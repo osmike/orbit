@@ -3,9 +3,9 @@ package pool
 import (
 	"context"
 	"github.com/stretchr/testify/assert"
-	"go-scheduler/internal/domain"
-	"go-scheduler/internal/job"
-	"go-scheduler/monitoring"
+	"orbit/internal/domain"
+	"orbit/internal/job"
+	"orbit/monitoring"
 	"sync"
 	"testing"
 	"time"

@@ -1,4 +1,4 @@
-module go-scheduler
+module orbit
 
 go 1.23
 

@@ -2,8 +2,8 @@ package pool
 
 import (
 	"errors"
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
 	"sync"
 	"time"
 )

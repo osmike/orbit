@@ -2,7 +2,7 @@ package orbit
 
 import (
 	"context"
-	errs "go-scheduler/internal/error"
+	errs "orbit/internal/error"
 	"strconv"
 	"testing"
 	"time"

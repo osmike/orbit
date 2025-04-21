@@ -45,11 +45,10 @@ package orbit
 import (
 	"context"
 	"fmt"
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
-	"go-scheduler/internal/job"
-	"go-scheduler/internal/pool"
-	defaultMonitoring "go-scheduler/monitoring"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
+	"orbit/internal/job"
+	"orbit/internal/pool"
 )
 
 // PoolConfig encapsulates the configuration settings required to initialize a new scheduler pool.
@@ -121,16 +120,34 @@ type HooksFunc = domain.Hooks
 //   - SaveData(map[string]interface{}): Stores custom job runtime metadata.
 type FnControl = domain.FnControl
 
-// Monitoring interface represents components responsible for collecting, storing,
-// and processing job execution metrics.
+// JobState represents the current runtime state of a job, including metadata such as:
+//   - StartAt / EndAt timestamps
+//   - Execution duration
+//   - Current status (Waiting, Running, Completed, etc.)
+//   - Success/failure counts
+//   - Custom key-value data stored via FnControl
+//   - Any error or hook-related failure that occurred
 //
-// Implementations can persist metrics using various strategies, including in-memory,
-// logging, databases, or external monitoring systems.
+// This type is returned by FnControl `ctrl.GetData()`,
+// and is useful for logging, monitoring, debugging, or exposing job status via API.
+type JobState = domain.StateDTO
+
+// Monitoring defines an interface for collecting, storing, and retrieving metrics related to job execution.
 //
-// Methods:
-//   - SaveMetrics(StateDTO): Stores metrics for a given job state.
-//   - GetMetrics() map[string]interface{}: Retrieves collected metrics.
-type Monitoring = domain.Monitoring
+// Implementations of this interface can persist metrics in various ways, such as:
+// - In-memory storage for simple debugging and development purposes.
+// - Real-time logging for operational monitoring.
+// - External systems like dashboards, time-series databases, or analytics platforms.
+type Monitoring interface {
+	// SaveMetrics stores execution metrics derived from a job's execution state (StateDTO).
+	//
+	// Implementations typically capture metrics like execution timestamps, duration,
+	// final status, encountered errors, and user-defined runtime metadata.
+	//
+	// Parameters:
+	//   - dto: StateDTO instance containing the job's execution details and metadata.
+	SaveMetrics(dto JobState)
+}
 
 // Scheduler orchestrates the creation and management of job execution pools and scheduled jobs.
 //
@@ -171,7 +188,7 @@ func New(ctx context.Context) *Scheduler {
 //   - Initialized and ready-to-use Pool instance.
 func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) (*Pool, error) {
 	if mon == nil {
-		mon = defaultMonitoring.New()
+		mon = newDefaultMon()
 	}
 
 	return pool.New(s.ctx, cfg, mon)

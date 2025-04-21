@@ -81,6 +81,10 @@ var (
 
 	// ErrRetryFlagNotActive indicates that retry is disabled for this job.
 	ErrRetryFlagNotActive = errors.New("retry flag is not active")
+
+	ErrMarshalStateData = errors.New("error marshaling state data")
+
+	ErrUnmarshalStateData = errors.New("error unmarshaling state data")
 )
 
 // Lifecycle hook execution errors.

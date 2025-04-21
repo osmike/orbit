@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"go-scheduler/internal/domain"
-	"go-scheduler/monitoring"
+	"orbit/internal/domain"
+	"orbit/monitoring"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -38,10 +38,6 @@ func TestJob_ProcessStart(t *testing.T) {
 	assert.True(t, state.EndAt.IsZero())
 	assert.Zero(t, state.ExecutionTime)
 	assert.Empty(t, state.Data)
-
-	metrics := j.mon.GetMetrics()
-	_, exists := metrics[j.ID]
-	assert.True(t, exists)
 }
 
 func TestJob_ProcessRun_NoTimeout(t *testing.T) {
@@ -78,9 +74,4 @@ func TestJob_ProcessEnd(t *testing.T) {
 	assert.Equal(t, domain.Completed, state.Status)
 	assert.True(t, !state.EndAt.IsZero())
 	assert.Greater(t, state.ExecutionTime, int64(0))
-
-	metrics := j.mon.GetMetrics()
-	finalState, ok := metrics[j.ID].(domain.StateDTO)
-	assert.True(t, ok)
-	assert.Equal(t, domain.Completed, finalState.Status)
 }

@@ -2,12 +2,12 @@ package job
 
 import (
 	"context"
-	"go-scheduler/monitoring"
+	"orbit/monitoring"
 	"testing"
 	"time"
 
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -143,4 +143,34 @@ func TestJob_SaveMetrics(t *testing.T) {
 	state, ok := metrics["metrics-job"].(domain.StateDTO)
 	assert.True(t, ok)
 	assert.Equal(t, "test_value", state.Data["test_key"])
+}
+
+func TestJob_GetStateCopy_AfterHookWrites(t *testing.T) {
+	mon := monitoring.New()
+	ctx := context.Background()
+
+	j, err := New(domain.JobDTO{
+		ID:       "copy-job",
+		Interval: domain.Interval{Time: time.Second},
+		Hooks: domain.Hooks{
+			OnStart: domain.Hook{
+				Fn: func(ctrl domain.FnControl, _ error) error {
+					ctrl.SaveData(map[string]interface{}{"foo": "bar"})
+					return nil
+				},
+			},
+		},
+		Fn: func(ctrl domain.FnControl) error {
+			state, err := ctrl.GetData()
+			assert.NoError(t, err)
+			val, ok := state.Data["foo"]
+			assert.True(t, ok)
+			assert.Equal(t, "bar", val)
+			return nil
+		},
+	}, ctx, mon)
+	assert.NoError(t, err)
+
+	err = j.Execute()
+	assert.NoError(t, err)
 }

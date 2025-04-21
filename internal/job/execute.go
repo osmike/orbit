@@ -2,8 +2,8 @@ package job
 
 import (
 	"fmt"
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
 )
 
 // Execute runs the job's main function, managing the full lifecycle including

@@ -2,12 +2,12 @@ package job
 
 import (
 	"context"
-	"go-scheduler/monitoring"
+	"orbit/monitoring"
 	"testing"
 	"time"
 
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
 
 	"github.com/stretchr/testify/assert"
 )

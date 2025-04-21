@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
-	"go-scheduler/internal/job"
-	"go-scheduler/monitoring"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
+	"orbit/internal/job"
+	"orbit/monitoring"
 
 	"github.com/stretchr/testify/assert"
 )

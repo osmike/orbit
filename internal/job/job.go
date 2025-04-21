@@ -5,26 +5,34 @@
 // runtime state tracking, and lifecycle hooks (OnStart, OnSuccess, OnError, Finally, etc.).
 //
 // Each Job exposes:
-//   - Fn: main execution function.
-//   - FnControl: runtime context passed to Fn, allowing data storage, pause/resume handling, and cancellation awareness.
-//   - StateDTO: internal state used to track execution metadata such as start time, end time, retries, errors, custom data, etc.
-//   - Monitoring: integration for saving metrics during job lifecycle transitions.
+//   - Fn: the main execution function of the task.
+//   - FnControl: a runtime context object passed to Fn and all lifecycle hooks,
+//     allowing cancellation awareness, pause/resume coordination, custom metadata storage (SaveData),
+//     and now full state access (via GetData).
+//   - StateDTO: internal immutable state representation capturing execution metadata
+//     such as start/end time, errors, current status, success/failure counters, custom user data, and next run time.
+//   - Monitoring: interface for real-time metric collection and persistence.
 //
-// The package provides:
-//   - Full lifecycle handling (start, monitor, finalize).
-//   - Retry mechanism with reset-on-success.
-//   - Thread-safe state management with fine-grained locking.
-//   - Isolation between control logic (FnControl) and state mutations (state).
+// Key Features of the job package:
+//   - Full lifecycle execution with structured state mutation.
+//   - Retry mechanism with configurable reset-on-success behavior.
+//   - Thread-safe state access through fine-grained locking.
+//   - Isolation between business logic (Fn) and internal state management.
+//   - State inspection from within job logic and hooks via FnControl.GetData().
+//   - Defensive execution with panic recovery, status protection, and data consistency.
 //
-// Jobs are created via the New function and scheduled for execution by the pool layer.
+// Jobs are created via the New function and registered into execution pools by the scheduler layer.
+// Once started, each job's behavior is controlled by interval/cron settings and monitored over its lifetime.
+
 package job
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
 	"sync"
 	"time"
 )
@@ -124,6 +132,7 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job
 		pauseChan:  job.pauseCh,
 		resumeChan: job.resumeCh,
 		saveData:   job.state.UpdateData,
+		getData:    job.GetStateCopy,
 	}
 
 	return job, nil
@@ -137,6 +146,43 @@ func (j *Job) GetMetadata() domain.JobDTO {
 // GetState returns a snapshot of the job's current execution state.
 func (j *Job) GetState() *domain.StateDTO {
 	return j.state.GetState()
+}
+
+// GetStateCopy returns a deep copy of the current job execution state.
+//
+// This method ensures that the returned StateDTO contains an isolated copy
+// of the Data field, which prevents accidental external mutations of the internal state.
+//
+// Returns:
+//   - A fully copied StateDTO instance representing the latest known state of the job.
+//   - An error if deep-copying the Data map fails due to serialization issues (e.g. unsupported types).
+func (j *Job) GetStateCopy() (res domain.StateDTO, err error) {
+	st := j.state.GetState()
+
+	bytes, err := json.Marshal(st.Data)
+	if err != nil {
+		return res, errs.New(errs.ErrMarshalStateData, fmt.Sprintf("error - %v, data - %v", err, st.Data))
+	}
+
+	var cpData map[string]interface{}
+	if err = json.Unmarshal(bytes, &cpData); err != nil {
+		return res, errs.New(errs.ErrUnmarshalStateData, fmt.Sprintf("error - %v, data - %v", err, st.Data))
+	}
+
+	res = domain.StateDTO{
+		JobID:         st.JobID,
+		StartAt:       st.StartAt,
+		EndAt:         st.EndAt,
+		Error:         st.Error,
+		Status:        st.Status,
+		ExecutionTime: st.ExecutionTime,
+		Data:          cpData,
+		Success:       st.Success,
+		Failure:       st.Failure,
+		NextRun:       st.NextRun,
+	}
+
+	return res, nil
 }
 
 // GetStatus retrieves the job's current status (e.g., Waiting, Running).

@@ -2,9 +2,9 @@ package job
 
 import (
 	"errors"
-	"go-scheduler/internal/domain"
-	errs "go-scheduler/internal/error"
-	"go-scheduler/monitoring"
+	"orbit/internal/domain"
+	errs "orbit/internal/error"
+	"orbit/monitoring"
 	"testing"
 	"time"
 
