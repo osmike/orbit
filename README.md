@@ -88,6 +88,81 @@ func main() {
 ## 🛠 Features
 
 - **🎮 Live Control**: Pause, Resume, or Stop jobs dynamically — as easily as managing a video or audio track.
+- - **📅 Advanced Job Example**: Cron-Based Execution with State & Control
+- - You can define advanced jobs that run on a cron schedule,
+- - maintain execution state between intervals, and support pause/resume operations mid-execution.
+- - Here's a job that runs every Friday at 8 PM, pulls row count from a database, and uploads data in batches:
+```go
+onStartFn := func(ctrl orb.FnControl) error {
+state, err := ctrl.GetData()
+if err != nil {
+return err
+}
+
+    rowCnt := db.GetRowCount()
+    ctrl.SaveData(map[string]interface{}{
+        "rowCnt":  rowCnt,
+        "uploaded": 0,
+    })
+
+    fmt.Printf("Job %s started, row count: %d\n", state.JobID, rowCnt)
+    return nil
+}
+
+mainFn := func(ctrl orb.FnControl) error {
+for {
+select {
+case <-ctrl.PauseChan():
+fmt.Println("Paused... waiting for resume")
+<-ctrl.ResumeChan()
+fmt.Println("Resumed, reconnecting to DB...")
+reconnectToDB()
+
+        case <-ctrl.Context().Done():
+            return ctrl.Context().Err()
+
+        default:
+            state, err := ctrl.GetData()
+            if err != nil {
+                return err
+            }
+
+            data := state.Data
+            uploaded := data["uploaded"].(int)
+            total := data["rowCnt"].(int)
+
+            uploaded += db.BatchInsert(1000)
+            ctrl.SaveData(map[string]interface{}{
+                "rowCnt":  total,
+                "uploaded": uploaded,
+            })
+
+            if uploaded >= total {
+                fmt.Println("✅ All data uploaded successfully.")
+                return nil
+            }
+        }
+    }
+}    
+```
+- - Then configure the job like this:
+```go
+jobCfg := orbit.JobConfig{
+    ID:       "weekly-upload",
+    Name:     "Weekly DB Upload",
+    Fn:       mainFn,
+    OnStart:  onStartFn,
+    Cron:     "0 20 * * 5", // Every Friday at 20:00 (8 PM)
+}
+```
+- - And add it to a running pool:
+```go
+orb.AddJob(pool, jobCfg)
+```
+- - **🧠 Key Concepts**
+- - - **Persistent Job State**: Use `ctrl.SaveData()` and `ctrl.GetData()` to persist values (like counters, status flags, etc.) between runs or across iterations inside a job.
+- - - **Pause & Resume**: You can call `PauseJob(id string)` and `ResumeJob(id string)` at runtime from your application logic. The job can listen to `ctrl.PauseChan()` and `ctrl.ResumeChan()` to handle reconnections or resume where it left off.
+- - - **Graceful Shutdown**: Jobs respect ctrl.Context().Done() to terminate cleanly.
 - **Concurrency Control**: Limit how many jobs run simultaneously.
 - **Lifecycle Hooks**: Customize behavior with hooks (`OnStart`, `OnSuccess`, `OnError`, etc.).
 - **Retry Mechanism**: Automatically retry failed tasks with configurable strategy.
