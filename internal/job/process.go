@@ -72,7 +72,6 @@ func (j *Job) ProcessError() error {
 	err := j.Retry()
 	if err != nil {
 		j.ProcessEnd(domain.Ended, err)
-		j.CloseChannels()
 		return err
 	}
 	j.SetStatus(domain.Completed)

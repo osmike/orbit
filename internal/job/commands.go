@@ -47,7 +47,7 @@ func (j *Job) Pause(timeout time.Duration) error {
 		return errs.New(errs.ErrJobPaused, j.ID)
 	}
 
-	return j.runHook(j.Hooks.OnPause, errs.ErrOnPauseHook)
+	return j.runHook(j.Hooks.OnPause, errs.ErrOnPauseHook, nil)
 }
 
 // Resume sends a resume signal to a paused or stopped job, allowing it to continue execution.
@@ -64,14 +64,14 @@ func (j *Job) Resume() error {
 		select {
 		case j.resumeCh <- struct{}{}:
 			j.SetStatus(domain.Running)
-			return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook)
+			return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook, nil)
 		default:
 			// resumeCh is full — resume already in progress or not handled
 			return errs.New(errs.ErrJobWrongStatus, "failed to send resume signal")
 		}
 	case domain.Stopped:
 		j.SetStatus(domain.Waiting)
-		return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook)
+		return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook, nil)
 	default:
 		return errs.New(errs.ErrJobNotPausedOrStopped, j.ID)
 	}
@@ -99,5 +99,5 @@ func (j *Job) Stop() error {
 	}
 
 	// Execute the OnStop hook if provided (for cleanup or state saving).
-	return j.runHook(j.Hooks.OnStop, errs.ErrOnStopHook)
+	return j.runHook(j.Hooks.OnStop, errs.ErrOnStopHook, nil)
 }

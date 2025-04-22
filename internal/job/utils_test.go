@@ -83,25 +83,3 @@ func TestJob_CalcNextRun_CronMode(t *testing.T) {
 	next := j.NextRun()
 	assert.True(t, next.After(time.Now()))
 }
-
-//func TestJob_Retry_WithinLimit(t *testing.T) {
-//	j := newTestJob(t)
-//	j.JobDTO.Retry.Count = 3
-//
-//	for i := 0; i <= 3; i++ {
-//		err := j.Retry()
-//		if i < 3 {
-//			assert.NoError(t, err)
-//		} else {
-//			assert.ErrorIs(t, err, errs.ErrJobRetryLimit)
-//		}
-//	}
-//}
-//
-//func TestJob_Retry_ZeroLimit(t *testing.T) {
-//	j := newTestJob(t)
-//	j.JobDTO.Retry.Count = 0
-//
-//	err := j.Retry()
-//	assert.ErrorIs(t, err, errs.ErrJobRetryLimit)
-//}

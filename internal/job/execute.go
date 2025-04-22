@@ -34,29 +34,32 @@ func (j *Job) Execute() (err error) {
 
 	// Always execute Finally hook regardless of prior success or failure
 	defer func() {
+		if r := recover(); r != nil {
+			err = errs.New(errs.ErrJobPanicked, fmt.Sprintf("panic: %v, job id: %s", r, j.ID))
+		}
 		if finalizeErr := j.finalizeExecution(); finalizeErr != nil {
 			err = finalizeErr
 		}
+		j.handleError(err)
 	}()
 
 	// Run OnStart hook
-	if err = j.runHook(j.Hooks.OnStart, errs.ErrOnStartHook); err != nil {
+	if err = j.runHook(j.Hooks.OnStart, errs.ErrOnStartHook, nil); err != nil {
 		return err
 	}
 
 	// Run main job function
 	if execErr := j.Fn(j.ctrl); execErr != nil {
 		// Run OnError hook (errors from it are logged, not returned)
-		_ = j.runHook(j.Hooks.OnError, errs.ErrOnErrorHook)
+		_ = j.runHook(j.Hooks.OnError, errs.ErrOnErrorHook, execErr)
 
 		// Propagate original function error
 		err = errs.New(errs.ErrJobExecution, fmt.Sprintf("job id: %s, error: %v", j.ID, execErr))
-		j.handleError(err)
 		return
 	}
 
 	// Run OnSuccess hook
-	err = j.runHook(j.Hooks.OnSuccess, errs.ErrOnSuccessHook)
+	err = j.runHook(j.Hooks.OnSuccess, errs.ErrOnSuccessHook, nil)
 
 	return
 }
@@ -66,6 +69,7 @@ func (j *Job) Execute() (err error) {
 // Parameters:
 //   - hook: The Hook struct containing the function and IgnoreError flag.
 //   - errType: A base error used for wrapping in case of failure.
+//   - execErr: A execution error, that handles in OnError hook
 //
 // Behavior:
 //   - Executes the provided hook function if defined.
@@ -76,7 +80,7 @@ func (j *Job) Execute() (err error) {
 // Returns:
 //   - nil if the hook is nil or completed successfully, or if errors are ignored.
 //   - A wrapped error if the hook fails and is not suppressed.
-func (j *Job) runHook(hook domain.Hook, errType error) (err error) {
+func (j *Job) runHook(hook domain.Hook, errType error, execErr error) (err error) {
 	if hook.Fn == nil {
 		return
 	}
@@ -91,7 +95,7 @@ func (j *Job) runHook(hook domain.Hook, errType error) (err error) {
 		}
 	}()
 
-	if err = hook.Fn(j.ctrl, nil); err != nil {
+	if err = hook.Fn(j.ctrl, execErr); err != nil {
 		err = errs.New(errType, fmt.Sprintf("job id: %s, error: %v", j.ID, err))
 		return
 	}
@@ -99,18 +103,22 @@ func (j *Job) runHook(hook domain.Hook, errType error) (err error) {
 	return
 }
 
-// finalizeExecution finalizes job lifecycle after execution completes,
-// ensuring post-execution cleanup and signaling future availability.
+// finalizeExecution finalizes the job lifecycle after the main function completes,
+// regardless of whether it ended in success, failure, or was canceled.
+//
+// This method ensures proper cleanup and reusability of the job instance in the following way:
 //
 // Behavior:
-//   - Executes the `Finally` hook regardless of success/failure.
-//   - Signals the job is available again by pushing to the `doneCh` channel.
+//   - Always executes the `Finally` hook, even if the main function panicked or returned an error.
+//   - Clears the `pauseCh` and `resumeCh` channels in case the job was paused/resumed
+//     during execution but didn't handle the signals (e.g., finished too early).
+//   - Drains and resets the `doneCh` semaphore to mark the job as available for future runs.
 //
 // Returns:
-//   - Error from the `Finally` hook, if any.
-//   - nil if cleanup completed successfully.
+//   - An error returned by the `Finally` hook, if any.
+//   - nil if cleanup completes successfully.
 func (j *Job) finalizeExecution() error {
-	if err := j.runHook(j.Hooks.Finally, errs.ErrFinallyHook); err != nil {
+	if err := j.runHook(j.Hooks.Finally, errs.ErrFinallyHook, nil); err != nil {
 		return err
 	}
 
@@ -121,5 +129,18 @@ func (j *Job) finalizeExecution() error {
 	}
 
 	j.doneCh <- struct{}{}
+
+	select {
+	case <-j.pauseCh:
+		// Clean up pause channel in case of calling Pause() during execution
+	default:
+	}
+
+	select {
+	case <-j.resumeCh:
+		// Clean up pause channel in case of calling Resume() during execution
+	default:
+	}
+
 	return nil
 }

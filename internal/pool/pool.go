@@ -203,3 +203,15 @@ func (p *Pool) Run() (err error) {
 
 	return err
 }
+
+// GetMetrics delegates metric retrieval to the underlying Monitoring implementation.
+//
+// This method returns the result of Mon.GetMetrics(), which may be either:
+//   - a custom implementation provided by the user, or
+//   - the default in-memory implementation (DefaultMon), which stores job metrics using sync.Map.
+//
+// The returned map contains job IDs as keys and job state or metric objects as values.
+// Use this method to collect runtime metrics for all jobs in the pool.
+func (p *Pool) GetMetrics() map[string]interface{} {
+	return p.Mon.GetMetrics()
+}

@@ -82,6 +82,8 @@ type Pool = pool.Pool
 //   - Hooks: Lifecycle hooks for custom logic execution.
 type JobConfig = domain.JobDTO
 
+type JobStatus = domain.JobStatus
+
 // IntervalConfig encapsulates job scheduling settings.
 //
 // Parameters:
@@ -108,6 +110,8 @@ type RetryConfig = domain.Retry
 //   - OnResume: Executed when job resumes after pause.
 //   - Finally: Always executed after job ends (successful, error, paused, stopped).
 type HooksFunc = domain.Hooks
+
+type Hook = domain.Hook
 
 // FnControl provides job execution control and runtime metadata storage.
 //
@@ -147,6 +151,13 @@ type Monitoring interface {
 	// Parameters:
 	//   - dto: StateDTO instance containing the job's execution details and metadata.
 	SaveMetrics(dto JobState)
+
+	// GetMetrics retrieves all stored execution metrics.
+	//
+	// Returns:
+	//   - A map keyed by JobID, where each entry contains the StateDTO representing
+	//     execution metrics for a specific job.
+	GetMetrics() map[string]interface{}
 }
 
 // Scheduler orchestrates the creation and management of job execution pools and scheduled jobs.

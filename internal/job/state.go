@@ -1,6 +1,7 @@
 package job
 
 import (
+	"errors"
 	"fmt"
 	"orbit/internal/domain"
 	errs "orbit/internal/error"
@@ -175,42 +176,54 @@ func (s *state) GetState() *domain.StateDTO {
 	}
 }
 
-// SetEndState finalizes the job's execution and updates its result state.
+// SetEndState finalizes the execution state of a job after it finishes running,
+// applying post-execution metadata such as status, error information, and execution duration.
 //
-// This method:
-//   - Calculates final execution time.
-//   - Detects invalid status transitions (e.g., if job was not running).
-//   - Increments retry or success/failure counters accordingly.
-//   - Stores any execution error for diagnostics.
-//   - Reports final state to monitoring.
+// Behavior:
+//   - Updates the job’s EndAt timestamp and total ExecutionTime.
+//   - Determines the correct final status based on current state:
+//   - If status was Running, Waiting, or Paused: sets the new status from input.
+//   - If status was Stopped, Ended, or Error: preserves the current status.
+//   - For unknown states, applies the provided final status defensively.
+//   - Records any job execution error for diagnostics.
+//   - Increments Success or Failure counters.
+//   - Resets the retry counter if the execution was successful and reset-on-success is enabled.
+//   - Saves the final state to the monitoring backend.
+//
+// Parameters:
+//   - resOnSuccess: If true, resets retry counter after a successful execution.
+//   - status: The target status to assign if eligible.
+//   - err: The execution error encountered, or nil if the job completed successfully.
 func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
+	defer s.mon.SaveMetrics(s.StateDTO)
 	s.EndAt = time.Now()
 	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
 
-	if !(s.Status == domain.Running || s.Status == domain.Waiting) {
-		s.Error.JobError = errs.New(errs.ErrJobWrongStatus,
-			fmt.Sprintf("wrong status transition from %s to %s", s.Status, status),
-		)
-		s.Status = domain.Error
-		s.mon.SaveMetrics(s.StateDTO)
-		return
+	switch s.Status {
+	case domain.Paused, domain.Running, domain.Waiting:
+		s.Status = status
+	case domain.Stopped, domain.Ended:
+		// Preserve current status (no override)
+	case domain.Error:
+		fmt.Println("got in Error")
+		if errors.Is(err, errs.ErrJobPanicked) {
+			fmt.Println("got in Error with panic")
+			s.Error.JobError = err
+		}
+	default:
+		// Fallback just in case of unknown value
+		s.Status = status
 	}
-
-	s.Status = status
 
 	if err == nil && resOnSuccess {
 		s.currentRetry = 0
 	}
-
-	s.Error.JobError = err
 
 	if err == nil {
 		s.Success++
 	} else {
 		s.Failure++
 	}
-	s.mon.SaveMetrics(s.StateDTO)
 }

@@ -15,4 +15,11 @@ type Monitoring interface {
 	// Parameters:
 	//   - dto: StateDTO instance containing the job's execution details and metadata.
 	SaveMetrics(dto StateDTO)
+
+	// GetMetrics retrieves all stored execution metrics.
+	//
+	// Returns:
+	//   - A map keyed by JobID, where each entry contains the StateDTO representing
+	//     execution metrics for a specific job.
+	GetMetrics() map[string]interface{}
 }

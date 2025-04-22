@@ -3,7 +3,6 @@ package job
 import (
 	"errors"
 	"orbit/internal/domain"
-	errs "orbit/internal/error"
 	"orbit/monitoring"
 	"testing"
 	"time"
@@ -106,14 +105,25 @@ func TestState_SetEndState_Valid(t *testing.T) {
 func TestState_SetEndState_InvalidTransition(t *testing.T) {
 	mon := monitoring.New()
 	s := newState("job-1", mon)
-	s.SetStatus(domain.Completed) // illegal transition
+	s.SetStatus(domain.Completed)
 	s.StartAt = time.Now()
 
 	s.SetEndState(true, domain.Completed, nil)
 
 	state := s.GetState()
-	assert.Equal(t, domain.Error, state.Status)
-	assert.ErrorIs(t, state.Error.JobError, errs.ErrJobWrongStatus)
+	assert.Equal(t, domain.Completed, state.Status)
+
+	s.SetStatus(domain.Paused)
+	s.StartAt = time.Now()
+	s.SetEndState(true, domain.Completed, nil)
+	state = s.GetState()
+	assert.Equal(t, domain.Completed, state.Status)
+
+	s.SetStatus(domain.Stopped)
+	s.StartAt = time.Now()
+	s.SetEndState(true, domain.Completed, nil)
+	state = s.GetState()
+	assert.Equal(t, domain.Stopped, state.Status)
 }
 
 func TestState_SetEndState_ResetsRetry(t *testing.T) {

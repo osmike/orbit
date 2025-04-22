@@ -2,7 +2,6 @@ package pool
 
 import (
 	"errors"
-	"fmt"
 	"orbit/internal/domain"
 	errs "orbit/internal/error"
 	"sync"
@@ -26,7 +25,6 @@ import (
 //   - sem: Semaphore channel limiting concurrent executions to MaxWorkers.
 //   - wg: WaitGroup used to wait for all job executions to complete.
 func (p *Pool) execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
-	meta := job.GetMetadata()
 
 	var (
 		err    error
@@ -44,11 +42,6 @@ func (p *Pool) execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 	go func() {
 		defer func() {
 			<-sem // Release the worker slot.
-
-			if r := recover(); r != nil {
-				status = domain.Error
-				err = errs.New(errs.ErrJobPanicked, fmt.Sprintf("panic: %v, job id: %s", r, meta.ID))
-			}
 
 			job.ProcessEnd(status, err)
 			wg.Done() // Mark job as done in WaitGroup.

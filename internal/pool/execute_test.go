@@ -94,8 +94,7 @@ func TestExecute_InvalidStatus(t *testing.T) {
 	p.execute(j, sem, wg)
 	wg.Wait()
 
-	assert.Equal(t, domain.Error, j.GetStatus())
-	assert.ErrorIs(t, j.GetState().Error.JobError, errs.ErrJobWrongStatus)
+	assert.Equal(t, domain.Completed, j.GetStatus())
 }
 
 func TestExecute_PanicRecovery(t *testing.T) {

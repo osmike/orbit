@@ -194,7 +194,7 @@ orbit/
 │   ├── error/      # Custom error handling
 │   ├── job/        # Job execution and lifecycle management
 │   └── pool/       # Job pool management
-├── monitoring/     # Implementation of default monitoring storage
+├── mon.go      # Implementation of default monitoring storage
 └── orbit.go    # Main scheduler API entry point
 ```
 
