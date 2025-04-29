@@ -15,11 +15,13 @@ import (
 //   - Prepares the state for clean metrics collection and data accumulation.
 func (j *Job) ProcessStart() {
 	startTime := time.Now()
+
 	j.UpdateStateStrict(domain.StateDTO{
 		StartAt:       startTime,
 		Status:        domain.Running,
 		ExecutionTime: 0,
 		Data:          map[string]interface{}{},
+		NextRun:       j.SetNextRun(startTime),
 	})
 }
 
@@ -58,20 +60,20 @@ func (j *Job) ProcessRun() error {
 	return nil
 }
 
-// ProcessError handles retry logic after a failed job execution.
+// ProcessError applies retry logic after a job execution failure.
 //
-// This method:
-//   - Attempts to retry the job using its Retry config.
-//   - If retry is exhausted or disabled, marks job as Ended and closes channels.
-//   - If retry is allowed, moves the job into Completed to await re-run.
+// Behavior:
+//   - If retries are available, the job is rescheduled by setting status to Completed.
+//   - If retries are exhausted or disabled, the job is finalized (Ended) and removed from the pool.
+//     (Note: In this case, execution errors are not stored in the final state.)
 //
 // Returns:
-//   - An error indicating whether retry is allowed.
-//   - nil if retry is accepted and job will be rescheduled.
+//   - An error if no more retries are allowed (indicating job termination).
+//   - nil if the job will be retried.
 func (j *Job) ProcessError() error {
 	err := j.Retry()
 	if err != nil {
-		j.ProcessEnd(domain.Ended, err)
+		j.ProcessEnd(domain.Ended, nil)
 		return err
 	}
 	j.SetStatus(domain.Completed)

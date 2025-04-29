@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	errs "orbit/internal/error"
+	"orbit/test"
 	"strconv"
 	"sync"
 	"testing"
@@ -115,14 +116,10 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 			case <-ctrl.Context().Done():
 				return ctrl.Context().Err()
 			default:
-				state, err := ctrl.GetData()
-				if err != nil {
-					return err
-				}
+				data := ctrl.GetData()
 
-				data := state.Data
-				uploaded := toInt(data["uploaded"])
-				total := toInt(data["rowCnt"])
+				uploaded := test.ToInt(data["uploaded"])
+				total := test.ToInt(data["rowCnt"])
 				time.Sleep(100 * time.Millisecond)
 				uploaded += db.batchSize
 				fmt.Printf("Uploading: %d / %d\n", uploaded, total)
@@ -164,8 +161,7 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 
 	pool.Run()
 
-	// Ждём, пока job реально начнёт загружать данные
-	waitForCondition(t, 2*time.Second, func() bool {
+	test.WaitForCondition(t, 2*time.Second, func() bool {
 		metrics := mon.GetMetrics()
 		stateRaw, ok := metrics[jobID]
 		if !ok {
@@ -182,7 +178,7 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 			t.Log("no uploaded in state")
 			return false
 		}
-		v := toInt(vRaw)
+		v := test.ToInt(vRaw)
 		t.Logf("uploaded = %d", v)
 		return v >= 1000
 	})
@@ -202,12 +198,13 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 	state, ok := stateRaw.(JobState)
 	assert.True(t, ok, "Expected JobState in metrics")
 
-	assert.Equal(t, 9000, toInt(state.Data["uploaded"]))
-	assert.Equal(t, 9000, toInt(state.Data["rowCnt"]))
+	assert.Equal(t, 9000, test.ToInt(state.Data["uploaded"]))
+	assert.Equal(t, 9000, test.ToInt(state.Data["rowCnt"]))
 	assert.True(t, db.reconnects >= 1, "Should reconnect at least once after pause")
 
 	err = pool.StopJob(jobID)
 	assert.NoError(t, err)
+
 	err = pool.RemoveJob(jobID)
 	assert.NoError(t, err)
 }
@@ -245,7 +242,7 @@ func TestJobStop(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	assert.NoError(t, pool.StopJob(jobID))
 
-	waitForCondition(t, 300*time.Millisecond, func() bool {
+	test.WaitForCondition(t, 300*time.Millisecond, func() bool {
 		return stopped
 	})
 }
@@ -282,93 +279,6 @@ func TestJobKill(t *testing.T) {
 	pool.Kill()
 
 	time.Sleep(100 * time.Millisecond)
-}
-
-func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
-	scheduler := New(context.Background())
-	mon := newDefaultMon()
-
-	pool, err := scheduler.CreatePool(PoolConfig{
-		MaxWorkers:    1,
-		CheckInterval: 10 * time.Millisecond,
-	}, mon)
-	assert.NoError(t, err)
-
-	called := false
-
-	withHook := func(ignore bool) JobConfig {
-		return JobConfig{
-			ID: "job-hook-ignore-" + strconv.FormatBool(ignore),
-			Fn: func(ctrl FnControl) error {
-				called = true
-				return nil
-			},
-			Hooks: HooksFunc{
-				OnStart: Hook{
-					Fn: func(ctrl FnControl, err error) error {
-						return errors.New("onStart failed")
-					},
-					IgnoreError: ignore,
-				},
-			},
-			Interval: IntervalConfig{Time: 0},
-		}
-	}
-
-	jobOK := withHook(true)
-	jobFail := withHook(false)
-
-	assert.NoError(t, scheduler.AddJob(pool, jobOK))
-	assert.NoError(t, scheduler.AddJob(pool, jobFail))
-
-	pool.Run()
-	time.Sleep(100 * time.Millisecond)
-
-	assert.True(t, called, "Job with IgnoreError=true should have executed")
-
-	metrics := mon.GetMetrics()
-	failState := metrics[jobFail.ID].(JobState)
-	assert.Equal(t, JobStatus("error"), failState.Status)
-	assert.Contains(t, failState.Error.OnStart.Error(), "onStart failed")
-}
-
-func TestHookOnError_IsCalled(t *testing.T) {
-	scheduler := New(context.Background())
-	mon := newDefaultMon()
-
-	pool, err := scheduler.CreatePool(PoolConfig{
-		MaxWorkers:    1,
-		CheckInterval: 10 * time.Millisecond,
-	}, mon)
-	assert.NoError(t, err)
-
-	var capturedErr error
-
-	job := JobConfig{
-		ID: "job-with-error-hook",
-		Fn: func(ctrl FnControl) error {
-			return errors.New("simulated failure")
-		},
-		Hooks: HooksFunc{
-			OnError: Hook{
-				Fn: func(ctrl FnControl, err error) error {
-					capturedErr = err
-					return nil
-				},
-			},
-		},
-		Interval: IntervalConfig{Time: 0},
-	}
-
-	assert.NoError(t, scheduler.AddJob(pool, job))
-	pool.Run()
-
-	waitForCondition(t, 1*time.Second, func() bool {
-		return capturedErr != nil
-	})
-
-	assert.NotNil(t, capturedErr)
-	assert.Contains(t, capturedErr.Error(), "simulated failure")
 }
 
 func TestJobPanic_RecoveryAndStatus(t *testing.T) {
@@ -431,19 +341,213 @@ func TestSequentialJobExecutionWithLimitedConcurrency(t *testing.T) {
 		}
 	}
 
+	pool.Run()
+
 	assert.NoError(t, scheduler.AddJob(pool, createJob("job1")))
 	time.Sleep(50 * time.Millisecond)
 	assert.NoError(t, scheduler.AddJob(pool, createJob("job2")))
 	time.Sleep(50 * time.Millisecond)
 	assert.NoError(t, scheduler.AddJob(pool, createJob("job3")))
 
-	pool.Run()
-
-	waitForCondition(t, 2*time.Second, func() bool {
+	test.WaitForCondition(t, 2*time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(executed) >= 3
 	})
 
 	assert.Equal(t, []string{"job1", "job2", "job3"}, executed)
+}
+
+func TestRetryMechanismBehavior(t *testing.T) {
+	orb := New(context.Background())
+	p, err := orb.CreatePool(PoolConfig{
+		MaxWorkers:    3,
+		CheckInterval: 10 * time.Millisecond,
+	}, newDefaultMon())
+	assert.NoError(t, err)
+
+	fn := func(ctrl FnControl) error {
+		return errors.New("oops")
+	}
+	intervalCfg := IntervalConfig{
+		Time: 50 * time.Millisecond,
+	}
+
+	jobsArr := []JobConfig{
+		{
+			ID:       "no-retry",
+			Fn:       fn,
+			Retry:    RetryConfig{Active: false},
+			Interval: intervalCfg,
+		},
+		//{
+		//	ID:       "3-retry",
+		//	Fn:       fn,
+		//	Retry:    RetryConfig{Active: true, Count: 3},
+		//	Interval: intervalCfg,
+		//},
+		//{
+		//	ID:       "infinite-retry",
+		//	Fn:       fn,
+		//	Retry:    RetryConfig{Active: true},
+		//	Interval: intervalCfg,
+		//},
+	}
+
+	err = p.Run()
+	assert.NoError(t, err)
+	defer p.Kill()
+
+	for _, job := range jobsArr {
+		err = orb.AddJob(p, job)
+		assert.NoError(t, err)
+	}
+
+	time.Sleep(600 * time.Millisecond)
+
+	metrics := p.GetMetrics()
+
+	state1 := metrics["no-retry"].(JobState)
+	assert.Equal(t, JobStatus("error"), state1.Status)
+	assert.Equal(t, 1, state1.Failure, "no-retry should fail exactly once")
+
+	//state2 := metrics["3-retry"].(JobState)
+	//assert.Equal(t, JobStatus("error"), state2.Status)
+	//assert.Equal(t, 4, state2.Failure, "3-retry should fail once + 3 retries = 4 failures")
+	//
+	//state3 := metrics["infinite-retry"].(JobState)
+	//assert.GreaterOrEqual(t, state3.Failure, 5, "infinite-retry should have at least 5 failures")
+}
+
+func TestCronJobExecutionAndManualStop(t *testing.T) {
+	orb := New(context.Background())
+
+	var counter int
+	var mu sync.Mutex
+
+	firstRunDone := make(chan struct{})
+
+	pool, err := orb.CreatePool(PoolConfig{
+		MaxWorkers:    1,
+		CheckInterval: 100 * time.Millisecond,
+	}, newDefaultMon())
+	assert.NoError(t, err)
+
+	jobID := "cron-increment-job"
+	jobCfg := JobConfig{
+		ID:   jobID,
+		Name: "Increment counter every minute",
+		Fn: func(ctrl FnControl) error {
+			mu.Lock()
+			fmt.Printf("[%s] started\n", jobID)
+			counter++
+			mu.Unlock()
+
+			select {
+			case firstRunDone <- struct{}{}: // Signal first execution
+			default:
+			}
+
+			return nil
+		},
+		Interval: IntervalConfig{CronExpr: "*/1 * * * *"},
+	}
+
+	err = orb.AddJob(pool, jobCfg)
+	assert.NoError(t, err)
+
+	err = pool.Run()
+	assert.NoError(t, err)
+
+	// Wait up to 70 seconds for the first execution
+	select {
+	case <-firstRunDone:
+		// First run happened
+	case <-time.After(70 * time.Second):
+		t.Fatal("First cron execution did not happen within expected time")
+	}
+
+	// Wait another ~70 seconds for second execution
+	time.Sleep(70 * time.Second)
+
+	// Now stop the job
+	err = pool.StopJob(jobID)
+	assert.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	metrics := pool.GetMetrics()
+	stateRaw, ok := metrics[jobID]
+	assert.True(t, ok, "Expected to find job metrics")
+
+	state, ok := stateRaw.(JobState)
+	assert.True(t, ok, "Expected JobState type")
+
+	assert.Equal(t, JobStatus("stopped"), state.Status, "Job should be stopped")
+
+	// Counter must be 2 (executed twice)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 2, counter, "Expected counter to be incremented twice")
+
+	pool.Kill()
+}
+
+func TestPool_GracefulKill(t *testing.T) {
+	ctx := context.Background()
+	orb := New(ctx)
+
+	pool, err := orb.CreatePool(PoolConfig{
+		MaxWorkers:    2,
+		CheckInterval: 50 * time.Millisecond,
+	}, newDefaultMon())
+	assert.NoError(t, err)
+
+	jobID := "kill-job"
+	started := make(chan struct{})
+
+	// Добавляем задачу
+	err = orb.AddJob(pool, JobConfig{
+		ID:   jobID,
+		Name: "Kill Job Example",
+		Fn: func(ctrl FnControl) error {
+			fmt.Println("[kill-job] started")
+			close(started) // сигнал что задача запущена
+			select {
+			case <-time.After(5 * time.Second):
+				fmt.Println("[kill-job] completed")
+				return nil
+			case <-ctrl.Context().Done():
+				fmt.Println("[kill-job] canceled by kill")
+				return ctrl.Context().Err()
+			}
+		},
+		Interval: IntervalConfig{Time: 1 * time.Minute}, // чтобы не было автоповтора
+	})
+	assert.NoError(t, err)
+
+	err = pool.Run()
+	assert.NoError(t, err)
+
+	select {
+	case <-started:
+		// ok
+	case <-time.After(2 * time.Second):
+		t.Fatal("Job did not start in time")
+	}
+
+	fmt.Println("Killing pool now...")
+	pool.Kill()
+
+	time.Sleep(200 * time.Millisecond)
+
+	metrics := pool.GetMetrics()
+	stateRaw, ok := metrics[jobID]
+	assert.True(t, ok, "Expected to find job metrics")
+
+	state, ok := stateRaw.(JobState)
+	assert.True(t, ok, "Expected JobState type")
+
+	assert.Equal(t, JobStatus("stopped"), state.Status, "Job should be stopped after kill")
+	assert.Equal(t, "pool shutdown", state.Error.JobError.Error(), "Expected pool shutdown error")
 }

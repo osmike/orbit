@@ -34,24 +34,23 @@ func (p *Pool) AddJob(job Job) error {
 	return nil
 }
 
-// RemoveJob removes an existing job from the scheduler pool.
+// RemoveJob deletes an existing job from the scheduler pool.
 //
 // The method:
-//   - Stops the job execution if currently running or waiting.
-//   - Deletes the job entry from the scheduler's internal storage.
+//   - Removes the job entry from the pool's internal storage.
+//   - It does not actively stop a running job; jobs are stopped separately via StopJob.
 //
 // Parameters:
 //   - id: Unique identifier of the job to remove.
 //
 // Returns:
 //   - An error (ErrJobNotFound) if the specified job does not exist.
-//   - nil if the job is successfully stopped and removed.
+//   - nil if the job is successfully removed.
 func (p *Pool) RemoveJob(id string) error {
-	job, err := p.getJobByID(id)
+	_, err := p.getJobByID(id)
 	if err != nil {
 		return err
 	}
-	job.Stop()
 	p.jobs.Delete(id)
 	return nil
 }
@@ -115,12 +114,15 @@ func (p *Pool) StopJob(id string) error {
 	return job.Stop()
 }
 
-// Kill terminates execution of all jobs within the scheduler pool immediately.
+// Kill immediately shuts down the entire scheduler pool.
 //
-// This method cancels the execution context of the entire pool, causing all running,
-// waiting, and scheduled jobs to be stopped.
+// This method:
+//   - Cancels the execution context of the pool, stopping all running, waiting, and scheduled jobs.
+//   - Updates all jobs' states to Stopped with an ErrPoolShutdown error.
+//   - Deletes all jobs from internal storage.
+//   - Marks the pool as permanently shut down; it cannot be restarted afterward.
 //
-// Use this method with caution, as it impacts all jobs managed by the pool.
+// Use this method with caution, as the pool becomes unusable after calling Kill.
 func (p *Pool) Kill() {
 	p.cancel()
 }

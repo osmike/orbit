@@ -73,9 +73,9 @@ func (j *Job) Execute() (err error) {
 //
 // Behavior:
 //   - Executes the provided hook function if defined.
-//   - Wraps and logs any returned error.
-//   - Recovers from panics, wraps them as hook errors.
-//   - If `IgnoreError` is true, the error is suppressed and not returned.
+//   - Recovers from panics, wrapping them as hook errors.
+//   - Any encountered error is passed to the internal error handler (handleError).
+//   - If `IgnoreError` is true, the error is suppressed and not returned by this method (but still reported internally).
 //
 // Returns:
 //   - nil if the hook is nil or completed successfully, or if errors are ignored.

@@ -14,17 +14,15 @@ type FnControl interface {
 	// SaveData stores arbitrary key-value pairs generated during the execution of a job.
 	// This data can later be accessed for monitoring, logging, or analysis.
 	SaveData(data map[string]interface{})
-	
-	// GetData returns a copy of the job's current execution state, including all saved runtime data.
+
+	// GetData returns a copy of the job's current saved runtime data.
 	//
-	// This method is useful for accessing job metadata from within the main function (Fn)
-	// or any lifecycle hook (OnStart, OnSuccess, etc.). It enables the job to inspect
-	// values previously stored via SaveData.
+	// This method allows the job to access the latest key-value pairs previously stored via SaveData.
+	// It can be used inside the main function (Fn) or any lifecycle hook (OnStart, OnSuccess, etc.).
 	//
 	// Returns:
-	//   - StateDTO: A snapshot of the current job state, including user-defined Data.
-	//   - error: An error if the state could not be retrieved or deserialized.
-	GetData() (StateDTO, error)
+	//   - map[string]interface{}: A snapshot of the user-defined runtime data.
+	GetData() map[string]interface{}
 
 	// Context returns the job's execution context.
 	// It is canceled when the job is stopped, times out, or the pool is shut down.

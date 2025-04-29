@@ -1,10 +1,7 @@
 package job
 
 import (
-	"errors"
-	"fmt"
 	"orbit/internal/domain"
-	errs "orbit/internal/error"
 	"sync"
 	"time"
 )
@@ -20,11 +17,16 @@ type state struct {
 	mon             domain.Monitoring // Monitoring implementation for metric tracking.
 }
 
-// newState initializes a new state instance with default values and monitoring support.
+// newState initializes a new job state with default values.
+//
+// Behavior:
+//   - Sets Status to Waiting.
+//   - Initializes an empty Data map.
+//   - Links the provided Monitoring backend for metric tracking.
 //
 // Parameters:
-//   - jobId: Unique identifier for the job.
-//   - mon: Monitoring system to which state updates are reported.
+//   - jobId: Unique job identifier.
+//   - mon: Monitoring implementation for metrics reporting.
 //
 // Returns:
 //   - A pointer to a fully initialized state.
@@ -41,7 +43,9 @@ func newState(jobId string, mon domain.Monitoring) *state {
 
 // SetStatus updates the job's execution status.
 //
-// Also sends metrics to the monitoring system after setting the status.
+// Behavior:
+//   - Updates the Status field.
+//   - Immediately saves the updated state into the Monitoring backend.
 func (s *state) SetStatus(status domain.JobStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,6 +82,12 @@ func (s *state) TrySetStatus(allowed []domain.JobStatus, status domain.JobStatus
 	return false
 }
 
+func (s *state) GetNextRun() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.NextRun
+}
+
 // UpdateExecutionTime calculates and updates execution duration since StartAt.
 //
 // Also pushes the updated state to the monitoring system.
@@ -105,14 +115,15 @@ func (s *state) UpdateData(data map[string]interface{}) {
 
 // Update applies a partial or full state update from the provided DTO.
 //
-// In strict mode, all fields are overwritten. In non-strict mode, only non-zero fields are updated.
+// Behavior:
+//   - In strict mode: All fields are forcefully overwritten. Metrics are not updated automatically (caller is responsible).
+//   - In non-strict mode: Only non-zero or non-empty fields are merged selectively. Metrics are updated immediately.
 //
 // Parameters:
 //   - state: New values to apply to the state.
-//   - strict: Whether to overwrite all fields or merge selectively.
+//   - strict: Whether to fully overwrite (true) or merge selectively (false).
 func (s *state) Update(state domain.StateDTO, strict bool) {
 	s.mu.Lock()
-	defer s.mon.SaveMetrics(s.StateDTO)
 	defer s.mu.Unlock()
 
 	if strict {
@@ -122,6 +133,7 @@ func (s *state) Update(state domain.StateDTO, strict bool) {
 		s.ExecutionTime = state.ExecutionTime
 		s.Status = state.Status
 		s.Error = state.Error
+		s.NextRun = state.NextRun
 		return
 	}
 
@@ -152,12 +164,17 @@ func (s *state) Update(state domain.StateDTO, strict bool) {
 	if state.Failure > 0 {
 		s.Failure = state.Failure
 	}
+	s.mon.SaveMetrics(s.StateDTO)
 }
 
-// GetState returns a snapshot of the current job state.
+// GetState returns the current job state.
+//
+// Warning:
+//   - The returned pointer refers to the internal state (not a deep clone).
+//   - External code must treat this object as read-only to avoid race conditions.
 //
 // Returns:
-//   - A pointer to a cloned StateDTO, safe for external read-only access.
+//   - A pointer to the current StateDTO.
 func (s *state) GetState() *domain.StateDTO {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -197,21 +214,16 @@ func (s *state) GetState() *domain.StateDTO {
 func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	defer s.mon.SaveMetrics(s.StateDTO)
+
 	s.EndAt = time.Now()
 	s.ExecutionTime = time.Since(s.StartAt).Nanoseconds()
 
 	switch s.Status {
 	case domain.Paused, domain.Running, domain.Waiting:
+		s.Error.JobError = err
 		s.Status = status
-	case domain.Stopped, domain.Ended:
+	case domain.Stopped, domain.Ended, domain.Error:
 		// Preserve current status (no override)
-	case domain.Error:
-		fmt.Println("got in Error")
-		if errors.Is(err, errs.ErrJobPanicked) {
-			fmt.Println("got in Error with panic")
-			s.Error.JobError = err
-		}
 	default:
 		// Fallback just in case of unknown value
 		s.Status = status
@@ -226,4 +238,5 @@ func (s *state) SetEndState(resOnSuccess bool, status domain.JobStatus, err erro
 	} else {
 		s.Failure++
 	}
+	s.mon.SaveMetrics(s.StateDTO)
 }

@@ -7,23 +7,24 @@ import (
 	"sync"
 )
 
-// execute schedules and executes a job in a separate goroutine, respecting pool constraints and job validity.
+// execute schedules and runs a job inside a separate goroutine, assuming a semaphore slot is already acquired.
 //
 // Execution flow:
 //  1. Validates job readiness via CanExecute():
-//     - Skips execution if job is not yet due (ErrJobExecTooEarly).
-//     - If the job is ineligible due to timing or status issues, execution is skipped or state is updated.
-//  2. Acquires a semaphore slot to enforce MaxWorkers limit.
-//     - If no slot is available, job execution is postponed until one frees up.
-//  3. Spawns a new goroutine to run the job:
-//     - Calls job.Execute(), handling errors and panics.
-//     - Calls ProcessEnd() with final status and error for proper cleanup.
-//  4. Ensures synchronization with WaitGroup.
+//     - If the job is not yet due (ErrJobExecTooEarly), execution is skipped.
+//     - If the job is otherwise invalid, execution is skipped or job status is updated.
+//  2. Registers the job execution in the WaitGroup to track active jobs.
+//  3. Launches a new goroutine:
+//     - Calls job.Execute().
+//     - Updates final status based on execution result.
+//     - Calls ProcessEnd() to finalize the job state.
+//     - Releases the semaphore slot.
+//     - Marks the job as done in the WaitGroup.
 //
 // Parameters:
-//   - job: Job to be executed.
-//   - sem: Semaphore channel limiting concurrent executions to MaxWorkers.
-//   - wg: WaitGroup used to wait for all job executions to complete.
+//   - job: Job to execute.
+//   - sem: Semaphore channel that controls maximum concurrency.
+//   - wg: WaitGroup to synchronize the completion of active jobs.
 func (p *Pool) execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 
 	var (

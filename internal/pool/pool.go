@@ -36,8 +36,8 @@ type Job interface {
 	// UpdateState partially updates the job's state with non-zero fields from the provided DTO.
 	UpdateState(state domain.StateDTO)
 
-	// NextRun calculates and returns the next scheduled execution time for the job.
-	NextRun() time.Time
+	// GetNextRun calculates and returns the next scheduled execution time for the job.
+	GetNextRun() time.Time
 
 	// ProcessStart marks the job's state as "Running", initializing execution metrics and metadata.
 	ProcessStart()
@@ -145,7 +145,11 @@ func (p *Pool) getJobByID(id string) (Job, error) {
 //   - Checks job states at regular intervals defined by CheckInterval.
 //   - Manages job lifecycle transitions (waiting, running, completed, error).
 //   - Controls concurrency using a semaphore to enforce MaxWorkers limits.
-//   - Ensures graceful shutdown by waiting for all active jobs to complete upon cancellation.
+//   - Upon shutdown:
+//   - Waits for all active job executions to complete.
+//   - Updates all remaining jobs to Stopped state with an ErrPoolShutdown error.
+//   - Removes all jobs from internal storage.
+//   - Marks the Pool as permanently killed (cannot be restarted).
 //
 // Returns:
 //   - An error (ErrPoolShutdown) if the pool was previously terminated.
@@ -185,7 +189,8 @@ func (p *Pool) Run() (err error) {
 			case <-ticker.C:
 				p.jobs.Range(func(key, value any) bool {
 					job := value.(Job)
-					switch job.GetStatus() {
+					status := job.GetStatus()
+					switch status {
 					case domain.Waiting:
 						p.processWaiting(job, sem, &wg)
 					case domain.Running:
@@ -204,11 +209,10 @@ func (p *Pool) Run() (err error) {
 	return err
 }
 
-// GetMetrics delegates metric retrieval to the underlying Monitoring implementation.
+// GetMetrics retrieves all job metrics currently tracked by the Pool.
 //
-// This method returns the result of Mon.GetMetrics(), which may be either:
-//   - a custom implementation provided by the user, or
-//   - the default in-memory implementation (DefaultMon), which stores job metrics using sync.Map.
+// This method returns the result of Mon.GetMetrics(), where Mon is the monitoring system
+// provided during pool creation (either custom or the default implementation).
 //
 // The returned map contains job IDs as keys and job state or metric objects as values.
 // Use this method to collect runtime metrics for all jobs in the pool.

@@ -63,14 +63,6 @@ func TestJob_CanExecute_TooLate(t *testing.T) {
 	assert.ErrorIs(t, err, errs.ErrJobExecAfterEnd)
 }
 
-func TestJob_CalcNextRun_IntervalMode(t *testing.T) {
-	j := newTestJob(t)
-	j.state.StartAt = time.Now()
-	next := j.NextRun()
-
-	assert.WithinDuration(t, time.Now(), next, 1*time.Minute)
-}
-
 func TestJob_CalcNextRun_CronMode(t *testing.T) {
 	j := newTestJob(t)
 
@@ -80,6 +72,6 @@ func TestJob_CalcNextRun_CronMode(t *testing.T) {
 	j.cron = cron
 	j.state.StartAt = time.Now()
 
-	next := j.NextRun()
+	next := j.SetNextRun(j.state.StartAt)
 	assert.True(t, next.After(time.Now()))
 }

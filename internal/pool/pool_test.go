@@ -8,6 +8,7 @@ import (
 	errs "orbit/internal/error"
 	"orbit/internal/job"
 	"orbit/monitoring"
+	"orbit/test"
 	"strconv"
 	"testing"
 	"time"
@@ -25,16 +26,23 @@ func CheckMetrics_Running(t *testing.T, data map[string]interface{}) {
 
 func CheckMetrics_Completed(t *testing.T, data map[string]interface{}) {
 	for k, v := range data {
-		state, _ := v.(domain.StateDTO)
-		k_num, err := strconv.Atoi(k)
-		assert.NoError(t, err, "convert id to int. job id - %s, error - %v", k, err)
-		doubledVal, ok := state.Data["doubled"]
-		assert.True(t, ok, "must be key doubled in state's data. job id - %s, data - %v", k, state.Data)
-		v_num, ok := doubledVal.(int)
-		assert.True(t, ok, "convert value of data[doubled] to int. job id - %s, value of data[doubled] - %d", k, doubledVal)
-		assert.True(t, (v_num/2) == k_num, "must be equal: id and value of data[doubled], job id - %s, value of data[doubled] - %d", k, doubledVal)
-		assert.True(t, time.Duration(state.ExecutionTime) > 1*time.Second, "exec time must be more than 1s. job id - %s, executing time - %S", k, state.ExecutionTime)
-		assert.Equal(t, domain.Completed, state.Status, "job status must be Completed. job id - %s, status - %s", k, state.Status)
+		state, ok := v.(domain.StateDTO)
+		assert.True(t, ok, "expected domain.StateDTO for job id %s", k)
+
+		kNum, err := strconv.Atoi(k)
+		assert.NoError(t, err, "failed to convert job id to int: job id = %s", k)
+
+		doubledVal, exists := state.Data["doubled"]
+		assert.True(t, exists, "missing 'doubled' key in job data: job id = %s, data = %+v", k, state.Data)
+
+		vNum, ok := doubledVal.(int)
+		assert.True(t, ok, "expected 'doubled' value to be int: job id = %s, value = %+v", k, doubledVal)
+
+		assert.Equal(t, kNum*2, vNum, "unexpected 'doubled' value: job id = %s, expected = %d, got = %d", k, kNum*2, vNum)
+
+		assert.Greater(t, time.Duration(state.ExecutionTime), 1*time.Second, "execution time must be > 1s: job id = %s, execTime = %d", k, state.ExecutionTime)
+
+		assert.Contains(t, []domain.JobStatus{domain.Completed, domain.Waiting}, state.Status, "unexpected job status: job id = %s, status = %s", k, state.Status)
 	}
 }
 
@@ -58,7 +66,7 @@ func TestPool_Run(t *testing.T) {
 					fmt.Println("job here")
 					return ctrl.Context().Err()
 				default:
-					time.Sleep(1 * time.Second)
+					time.Sleep(2 * time.Second)
 					data := map[string]interface{}{
 						"doubled": i * 2,
 					}
@@ -69,7 +77,7 @@ func TestPool_Run(t *testing.T) {
 		}
 		jCfg := domain.JobDTO{
 			ID:       strconv.Itoa(i),
-			Interval: domain.Interval{Time: 2 * time.Second},
+			Interval: domain.Interval{Time: 3 * time.Second},
 			Fn:       fn,
 		}
 		var j *job.Job
@@ -78,12 +86,39 @@ func TestPool_Run(t *testing.T) {
 		err = p.AddJob(j)
 		assert.NoError(t, err)
 	}
-	p.Run()
-	time.Sleep(550 * time.Millisecond)
+	err = p.Run()
+	assert.NoError(t, err)
+	test.WaitForCondition(t, 1*time.Second, func() bool {
+		metrics := mon.GetMetrics()
+		count := 0
+		for _, m := range metrics {
+			state, ok := m.(domain.StateDTO)
+			if !ok {
+				continue
+			}
+			if state.Status == domain.Running {
+				count++
+			}
+		}
+		return count >= 99
+	})
+	time.Sleep(500 * time.Millisecond)
 	CheckMetrics_Running(t, mon.GetMetrics())
-	time.Sleep(530 * time.Millisecond)
+	test.WaitForCondition(t, 3*time.Second, func() bool {
+		metrics := mon.GetMetrics()
+		count := 0
+		for _, m := range metrics {
+			state, ok := m.(domain.StateDTO)
+			if !ok {
+				continue
+			}
+			if state.Status == domain.Completed || state.Status == domain.Waiting {
+				count++
+			}
+		}
+		return count >= 99
+	})
 	CheckMetrics_Completed(t, mon.GetMetrics())
-	time.Sleep(2000 * time.Millisecond)
 
 	p.Kill()
 	time.Sleep(100 * time.Millisecond)

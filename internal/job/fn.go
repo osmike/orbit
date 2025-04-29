@@ -2,7 +2,6 @@ package job
 
 import (
 	"context"
-	"orbit/internal/domain"
 )
 
 // Fn defines the signature of a job's main execution function.
@@ -26,11 +25,11 @@ type Fn func(ctrl FnControl) error
 //   - Pause/resume signaling support.
 //   - Saving runtime key-value data for inspection or lifecycle hooks.
 type FnControl struct {
-	ctx        context.Context                 // Execution context (cancellable by timeout or external stop)
-	pauseChan  chan struct{}                   // Signal to pause job execution
-	resumeChan chan struct{}                   // Signal to resume a paused job
-	saveData   func(map[string]interface{})    // Internal callback for saving metadata to job state
-	getData    func() (domain.StateDTO, error) // Internal callback used to retrieve a safe copy of the job’s execution state.
+	ctx        context.Context               // Execution context (cancellable by timeout or external stop)
+	pauseChan  chan struct{}                 // Signal to pause job execution
+	resumeChan chan struct{}                 // Signal to resume a paused job
+	saveData   func(map[string]interface{})  // Internal callback for saving metadata to job state
+	getData    func() map[string]interface{} // Internal callback used to retrieve a safe copy of the job’s execution state.
 }
 
 // SaveData stores custom key-value data generated during job execution.
@@ -44,16 +43,14 @@ func (ctrl *FnControl) SaveData(data map[string]interface{}) {
 	ctrl.saveData(data)
 }
 
-// GetData returns a copy of the job's current execution state,
-// including any previously saved custom metadata.
+// GetData returns a copy of the job's current saved runtime data.
 //
-// This allows the job or its lifecycle hooks (e.g., OnStart, OnSuccess) to
-// access and reason about its own runtime data during execution.
+// This method allows the job to access the latest key-value pairs previously stored via SaveData.
+// It can be used inside the main function (Fn) or any lifecycle hook (OnStart, OnSuccess, etc.).
 //
 // Returns:
-//   - A copy of the current job state (StateDTO), including Data.
-//   - An error if state access fails or data deserialization encounters issues.
-func (ctrl *FnControl) GetData() (domain.StateDTO, error) {
+//   - map[string]interface{}: A snapshot of the user-defined runtime data.
+func (ctrl *FnControl) GetData() map[string]interface{} {
 	return ctrl.getData()
 }
 

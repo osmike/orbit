@@ -52,8 +52,8 @@ func (j *Job) Pause(timeout time.Duration) error {
 
 // Resume sends a resume signal to a paused or stopped job, allowing it to continue execution.
 //
-// If the job was paused, it sends a signal to resumeCh and triggers the OnResume hook.
-// If the job was stopped, it sets the status to Waiting and triggers the hook.
+// If the job was Paused, it sends a resume signal via resumeCh, sets status to Running, and triggers the OnResume hook.
+// If the job was Stopped, it transitions the status to Waiting (preparing for re-execution) and triggers the OnResume hook.
 //
 // Returns:
 //   - An error if the job is not in the Paused or Stopped state,

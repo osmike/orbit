@@ -28,7 +28,6 @@ package job
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"orbit/internal/domain"
@@ -98,7 +97,6 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job
 	if job.Interval.CronExpr != "" && job.Interval.Time > 0 {
 		return nil, errs.New(errs.ErrMixedScheduleType, job.ID)
 	}
-	nextRun := time.Now()
 	if job.Interval.CronExpr != "" {
 		cron, err := ParseCron(job.Interval.CronExpr)
 		if err != nil {
@@ -106,6 +104,7 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job
 		}
 		job.cron = cron
 	}
+	startTime := job.StartAt
 	if job.StartAt.IsZero() {
 		job.StartAt = time.Now()
 	}
@@ -117,7 +116,7 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job
 
 	job.mon = mon
 	job.state = newState(job.ID, job.mon)
-	job.state.NextRun = nextRun
+	job.state.NextRun = job.SetNextRun(startTime)
 	job.ctx, job.cancel = context.WithCancel(ctx)
 
 	job.pauseCh = make(chan struct{}, 1)
@@ -132,7 +131,7 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job
 		pauseChan:  job.pauseCh,
 		resumeChan: job.resumeCh,
 		saveData:   job.state.UpdateData,
-		getData:    job.GetStateCopy,
+		getData:    job.GetStateData,
 	}
 
 	return job, nil
@@ -148,41 +147,20 @@ func (j *Job) GetState() *domain.StateDTO {
 	return j.state.GetState()
 }
 
-// GetStateCopy returns a deep copy of the current job execution state.
+// GetStateData returns a copy of the job's current runtime data.
 //
-// This method ensures that the returned StateDTO contains an isolated copy
-// of the Data field, which prevents accidental external mutations of the internal state.
+// This method allows accessing the latest key-value pairs previously stored via SaveData.
+// It guarantees that modifications to the returned map will not affect the internal state.
 //
 // Returns:
-//   - A fully copied StateDTO instance representing the latest known state of the job.
-//   - An error if deep-copying the Data map fails due to serialization issues (e.g. unsupported types).
-func (j *Job) GetStateCopy() (res domain.StateDTO, err error) {
+//   - map[string]interface{}: A copy of the user-defined Data field.
+func (j *Job) GetStateData() map[string]interface{} {
 	st := j.state.GetState()
-
-	bytes, err := json.Marshal(st.Data)
-	if err != nil {
-		return res, errs.New(errs.ErrMarshalStateData, fmt.Sprintf("error - %v, data - %v", err, st.Data))
+	data := st.Data
+	if data == nil {
+		return map[string]interface{}{}
 	}
-
-	var cpData map[string]interface{}
-	if err = json.Unmarshal(bytes, &cpData); err != nil {
-		return res, errs.New(errs.ErrUnmarshalStateData, fmt.Sprintf("error - %v, data - %v", err, st.Data))
-	}
-
-	res = domain.StateDTO{
-		JobID:         st.JobID,
-		StartAt:       st.StartAt,
-		EndAt:         st.EndAt,
-		Error:         st.Error,
-		Status:        st.Status,
-		ExecutionTime: st.ExecutionTime,
-		Data:          cpData,
-		Success:       st.Success,
-		Failure:       st.Failure,
-		NextRun:       st.NextRun,
-	}
-
-	return res, nil
+	return data
 }
 
 // GetStatus retrieves the job's current status (e.g., Waiting, Running).

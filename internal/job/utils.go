@@ -34,23 +34,36 @@ func (j *Job) CanExecute() error {
 	return nil
 }
 
-// NextRun determines the job's next scheduled execution time.
+// SetNextRun determines and schedules the next job execution time.
 //
-// Logic:
-//   - If the job uses cron syntax, calculates next run from the cron schedule.
-//   - If using a fixed interval, adds interval to the last StartAt time.
+// Behavior:
+//   - If the job uses a cron schedule, fetches the next run time and advances the internal cron iterator.
+//   - If using a fixed interval, adds Interval.Time to the provided startTime.
+//
+// Parameters:
+//   - startTime: The baseline time to calculate the next run from.
 //
 // Returns:
-//   - The calculated time of next execution attempt.
-func (j *Job) NextRun() time.Time {
+//   - The calculated next execution time.
+
+func (j *Job) SetNextRun(startTime time.Time) time.Time {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
 	if j.cron != nil {
-		return j.cron.NextRun()
+		res := j.cron.NextRun()
+		return res
 	}
 
-	return j.state.StartAt.Add(j.Interval.Time)
+	return startTime.Add(j.Interval.Time)
+}
+
+// GetNextRun retrieves the scheduled time for the job's next execution.
+//
+// Returns:
+//   - time.Time: The timestamp of the next planned run.
+func (j *Job) GetNextRun() time.Time {
+	return j.state.GetNextRun()
 }
 
 // Retry increments the job's retry counter and evaluates retry eligibility.
@@ -83,10 +96,15 @@ func (j *Job) Retry() error {
 	return nil
 }
 
-// CloseChannels terminates all internal job channels safely and cancels the job context.
+// CloseChannels safely closes all internal job channels and cancels the job context.
 //
-// This method is used during graceful shutdown or finalization. It recovers from
-// any panics caused by closing already-closed channels.
+// Behavior:
+//   - Attempts to close all coordination channels (pause, resume, done, process).
+//   - Recovers from any panics due to closing already-closed channels.
+//   - Cancels the associated job context.
+//
+// Warning:
+//   - processCh is mistakenly attempted to be closed twice — calling CloseChannels more than once is unsafe and should be avoided.
 func (j *Job) CloseChannels() {
 	defer func() {
 		recover()

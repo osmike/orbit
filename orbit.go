@@ -18,9 +18,9 @@
 //
 // Example usage:
 //
-//	s := go_scheduler.New(context.Background())
+//	s := orbit.New(context.Background())
 //
-//	poolCfg := go_scheduler.PoolConfig{
+//	poolCfg := orbit.PoolConfig{
 //		ID:           "analytics-pool",
 //		MaxWorkers:   10,
 //		CheckInterval: 200 * time.Millisecond,
@@ -28,18 +28,22 @@
 //
 //	pool, _ := s.CreatePool(poolCfg, nil)
 //
-//	jobCfg := go_scheduler.JobConfig{
+//	jobCfg := orbit.JobConfig{
 //		ID: "report-job",
-//		Fn: func(ctrl go_scheduler.FnControl) error {
+//		Fn: func(ctrl orbit.FnControl) error {
 //			// perform some logic...
 //			ctrl.SaveData(map[string]interface{}{"result": "ok"})
 //			return nil
 //		},
-//		Interval: go_scheduler.IntervalConfig{Time: 5 * time.Second},
-//		Retry:    go_scheduler.RetryConfig{Count: 3, Time: 1 * time.Second},
+//		Interval: orbit.IntervalConfig{Time: 5 * time.Second},
 //	}
 //
 //	s.AddJob(pool, jobCfg)
+//
+//  pool.Run()
+//  defer pool.Kill()
+//  select {}
+
 package orbit
 
 import (
@@ -82,6 +86,18 @@ type Pool = pool.Pool
 //   - Hooks: Lifecycle hooks for custom logic execution.
 type JobConfig = domain.JobDTO
 
+// JobStatus represents the current lifecycle status of a job.
+//
+// Possible statuses include:
+//   - Waiting
+//   - Running
+//   - Completed
+//   - Error
+//   - Ended
+//   - Stopped
+//   - Paused
+//
+// Use this type to monitor and control job state transitions.
 type JobStatus = domain.JobStatus
 
 // IntervalConfig encapsulates job scheduling settings.
@@ -111,6 +127,13 @@ type RetryConfig = domain.Retry
 //   - Finally: Always executed after job ends (successful, error, paused, stopped).
 type HooksFunc = domain.Hooks
 
+// Hook defines a function that is executed during a specific lifecycle stage of a job.
+//
+// Each Hook consists of:
+//   - Fn: the hook function to be executed.
+//   - IgnoreError: whether to suppress errors returned by the hook.
+//
+// Used in HooksFunc to define custom actions for events like start, stop, error, success, etc.
 type Hook = domain.Hook
 
 // FnControl provides job execution control and runtime metadata storage.
@@ -170,7 +193,7 @@ type Monitoring interface {
 //
 // Usage:
 //
-//	scheduler := go_scheduler.New(context.Background())
+//	scheduler := orbit.New(context.Background())
 //	pool := scheduler.CreatePool(config, nil)
 //	scheduler.AddJob(pool, jobConfig)
 type Scheduler struct {

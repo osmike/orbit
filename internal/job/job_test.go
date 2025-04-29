@@ -161,9 +161,8 @@ func TestJob_GetStateCopy_AfterHookWrites(t *testing.T) {
 			},
 		},
 		Fn: func(ctrl domain.FnControl) error {
-			state, err := ctrl.GetData()
-			assert.NoError(t, err)
-			val, ok := state.Data["foo"]
+			data := ctrl.GetData()
+			val, ok := data["foo"]
 			assert.True(t, ok)
 			assert.Equal(t, "bar", val)
 			return nil

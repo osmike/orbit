@@ -10,8 +10,11 @@ import (
 
 // processWaiting checks if a job in the "Waiting" state is ready to execute.
 //
-// If the current time is past the job's scheduled next run time,
-// the job is dispatched for execution.
+// Behavior:
+//   - If the current time is past the job's scheduled next run time, the job is dispatched for execution.
+//   - Acquires a semaphore slot with timeout protection to avoid deadlocks.
+//   - If execution is not possible (e.g., wrong status, not yet time), updates job state accordingly.
+//   - If the job was not executed after acquiring the slot, the semaphore slot is manually released.
 //
 // Parameters:
 //   - job: The Job instance currently in the Waiting state.
@@ -58,7 +61,8 @@ func (p *Pool) processWaiting(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 			return
 		}
 	}
-	nextRun := job.NextRun()
+	nextRun := job.GetNextRun()
+
 	if time.Now().After(nextRun) || time.Now().Equal(nextRun) {
 		// Mark the job as started, update metrics.
 		job.ProcessStart()
@@ -96,7 +100,7 @@ func (p *Pool) processRunning(job Job) {
 // Parameters:
 //   - job: The Job instance that has completed its execution.
 func (p *Pool) processCompleted(job Job) {
-	nextRun := job.NextRun()
+	nextRun := job.GetNextRun()
 
 	if nextRun.After(time.Now()) || time.Now().Equal(nextRun) {
 		job.UpdateState(domain.StateDTO{
@@ -109,12 +113,29 @@ func (p *Pool) processCompleted(job Job) {
 
 // processError manages jobs that have encountered an error during execution.
 //
-// It attempts to retry the job execution if retries are still allowed. If the retry
-// limit is reached, no further action is taken. Otherwise, the job state is reset
-// to "Waiting", scheduling it for the next execution attempt.
+// Behavior:
+//   - Attempts to retry the job execution if retries are still allowed.
+//   - If retries are exhausted, the job is removed from the pool.
+//   - If retry is allowed, the job is reset to "Waiting" for another execution attempt.
 //
 // Parameters:
 //   - job: The Job instance currently in an Error state.
+//
+// Returns:
+//   - An error if the job could not be removed from the pool.
+//   - nil otherwise.
 func (p *Pool) processError(job Job) error {
-	return job.ProcessError()
+	if !job.LockJob() {
+		// someone is already working with this job
+		return nil
+	}
+	defer job.UnlockJob()
+	err := job.ProcessError()
+	if err != nil {
+		md := job.GetMetadata()
+
+		err = p.RemoveJob(md.ID)
+		return err
+	}
+	return nil
 }
