@@ -2,7 +2,6 @@ package pool
 
 import (
 	"context"
-	"fmt"
 	"github.com/stretchr/testify/assert"
 	"orbit/internal/domain"
 	errs "orbit/internal/error"
@@ -55,15 +54,14 @@ func TestPool_Run(t *testing.T) {
 	mon := monitoring.New()
 	var err error
 
-	p, _ := New(context.Background(), cfg, mon)
-	for i := 1; i < 1000; i++ {
+	p := New(context.Background(), cfg, mon)
+	for i := 1; i < 1001; i++ {
 		fn := func(ctrl domain.FnControl) error {
 			for {
 				select {
 				case <-ctrl.PauseChan():
 					<-ctrl.ResumeChan()
 				case <-ctrl.Context().Done():
-					fmt.Println("job here")
 					return ctrl.Context().Err()
 				default:
 					time.Sleep(2 * time.Second)
@@ -90,6 +88,7 @@ func TestPool_Run(t *testing.T) {
 	assert.NoError(t, err)
 	test.WaitForCondition(t, 1*time.Second, func() bool {
 		metrics := mon.GetMetrics()
+
 		count := 0
 		for _, m := range metrics {
 			state, ok := m.(domain.StateDTO)
@@ -100,7 +99,7 @@ func TestPool_Run(t *testing.T) {
 				count++
 			}
 		}
-		return count >= 99
+		return count >= 999
 	})
 	time.Sleep(500 * time.Millisecond)
 	CheckMetrics_Running(t, mon.GetMetrics())
@@ -116,7 +115,7 @@ func TestPool_Run(t *testing.T) {
 				count++
 			}
 		}
-		return count >= 99
+		return count >= 999
 	})
 	CheckMetrics_Completed(t, mon.GetMetrics())
 

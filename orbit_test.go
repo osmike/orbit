@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestJobConfig(id string, interval time.Duration, fn func(ctrl FnControl) error) JobConfig {
-	return JobConfig{
+func newTestJob(id string, interval time.Duration, fn func(ctrl FnControl) error) Job {
+	return Job{
 		ID:       id,
-		Interval: IntervalConfig{Time: interval},
+		Interval: Interval{Time: interval},
 		Fn:       fn,
 	}
 }
@@ -39,7 +39,7 @@ func TestSchedulerAPI(t *testing.T) {
 			return nil
 		}
 
-		p, err := scheduler.CreatePool(PoolConfig{
+		p := scheduler.CreatePool(PoolConfig{
 			MaxWorkers:    1,
 			CheckInterval: 10 * time.Millisecond,
 		}, nil)
@@ -51,7 +51,7 @@ func TestSchedulerAPI(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Add job
-		err = scheduler.AddJob(p, newTestJobConfig(jobID, 50*time.Millisecond, jobFn))
+		err = scheduler.AddJob(p, newTestJob(jobID, 50*time.Millisecond, jobFn))
 		assert.NoError(t, err)
 
 		time.Sleep(100 * time.Millisecond)
@@ -65,7 +65,7 @@ func TestSchedulerAPI(t *testing.T) {
 		err = p.RemoveJob(jobID)
 		assert.NoError(t, err)
 
-		err = scheduler.AddJob(p, newTestJobConfig(jobID, 50*time.Millisecond, func(ctrl FnControl) error {
+		err = scheduler.AddJob(p, newTestJob(jobID, 50*time.Millisecond, func(ctrl FnControl) error {
 			time.Sleep(100 * time.Millisecond)
 			return nil
 		}))
@@ -137,26 +137,25 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 	}
 
 	mon := newDefaultMon()
-	pool, err := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
-	assert.NoError(t, err)
 
 	jobID := "stateful-job"
-	job := JobConfig{
+	job := Job{
 		ID: jobID,
 		Fn: mainFn,
-		Hooks: HooksFunc{
+		Hooks: Hooks{
 			OnStart: Hook{
 				Fn:          onStart,
 				IgnoreError: true,
 			},
 		},
-		Interval: IntervalConfig{Time: 0},
+		Interval: Interval{Time: 0},
 	}
 
-	err = scheduler.AddJob(pool, job)
+	err := scheduler.AddJob(pool, job)
 	assert.NoError(t, err)
 
 	pool.Run()
@@ -211,16 +210,15 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 
 func TestJobStop(t *testing.T) {
 	scheduler := New(context.Background())
-	pool, err := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, newDefaultMon())
-	assert.NoError(t, err)
 
 	stopped := false
 
 	jobID := "stop-job"
-	job := JobConfig{
+	job := Job{
 		ID: jobID,
 		Fn: func(ctrl FnControl) error {
 			for {
@@ -233,7 +231,7 @@ func TestJobStop(t *testing.T) {
 				}
 			}
 		},
-		Interval: IntervalConfig{Time: 0},
+		Interval: Interval{Time: 0},
 	}
 
 	assert.NoError(t, scheduler.AddJob(pool, job))
@@ -249,16 +247,15 @@ func TestJobStop(t *testing.T) {
 
 func TestJobKill(t *testing.T) {
 	scheduler := New(context.Background())
-	pool, err := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, newDefaultMon())
-	assert.NoError(t, err)
 
 	jobID := "kill-job"
 	block := make(chan struct{})
 
-	job := JobConfig{
+	job := Job{
 		ID: jobID,
 		Fn: func(ctrl FnControl) error {
 			select {
@@ -269,7 +266,7 @@ func TestJobKill(t *testing.T) {
 				return nil
 			}
 		},
-		Interval: IntervalConfig{Time: 0},
+		Interval: Interval{Time: 0},
 	}
 
 	assert.NoError(t, scheduler.AddJob(pool, job))
@@ -285,18 +282,17 @@ func TestJobPanic_RecoveryAndStatus(t *testing.T) {
 	scheduler := New(context.Background())
 	mon := newDefaultMon()
 
-	pool, err := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
-	assert.NoError(t, err)
 
-	job := JobConfig{
+	job := Job{
 		ID: "panic-job",
 		Fn: func(ctrl FnControl) error {
 			panic("unexpected crash!")
 		},
-		Interval: IntervalConfig{Time: 0},
+		Interval: Interval{Time: 0},
 	}
 
 	assert.NoError(t, scheduler.AddJob(pool, job))
@@ -317,17 +313,16 @@ func TestSequentialJobExecutionWithLimitedConcurrency(t *testing.T) {
 	executed := []string{}
 	var mu sync.Mutex
 
-	pool, err := scheduler.CreatePool(PoolConfig{
-		MaxWorkers:    1,                     // только одна джоба одновременно
-		CheckInterval: 10 * time.Millisecond, // частая проверка
+	pool := scheduler.CreatePool(PoolConfig{
+		MaxWorkers:    1,
+		CheckInterval: 10 * time.Millisecond,
 	}, newDefaultMon())
-	assert.NoError(t, err)
 
-	createJob := func(id string) JobConfig {
-		return JobConfig{
+	createJob := func(id string) Job {
+		return Job{
 			ID:       id,
 			Name:     fmt.Sprintf("Job %s", id),
-			Interval: IntervalConfig{Time: time.Second},
+			Interval: Interval{Time: time.Second},
 			Fn: func(ctrl FnControl) error {
 				mu.Lock()
 				executed = append(executed, id)
@@ -356,45 +351,45 @@ func TestSequentialJobExecutionWithLimitedConcurrency(t *testing.T) {
 	})
 
 	assert.Equal(t, []string{"job1", "job2", "job3"}, executed)
+	pool.Kill()
 }
 
 func TestRetryMechanismBehavior(t *testing.T) {
 	orb := New(context.Background())
-	p, err := orb.CreatePool(PoolConfig{
+	p := orb.CreatePool(PoolConfig{
 		MaxWorkers:    3,
 		CheckInterval: 10 * time.Millisecond,
 	}, newDefaultMon())
-	assert.NoError(t, err)
 
 	fn := func(ctrl FnControl) error {
 		return errors.New("oops")
 	}
-	intervalCfg := IntervalConfig{
+	intervalCfg := Interval{
 		Time: 50 * time.Millisecond,
 	}
 
-	jobsArr := []JobConfig{
+	jobsArr := []Job{
 		{
 			ID:       "no-retry",
 			Fn:       fn,
-			Retry:    RetryConfig{Active: false},
+			Retry:    Retry{Active: false},
 			Interval: intervalCfg,
 		},
-		//{
-		//	ID:       "3-retry",
-		//	Fn:       fn,
-		//	Retry:    RetryConfig{Active: true, Count: 3},
-		//	Interval: intervalCfg,
-		//},
-		//{
-		//	ID:       "infinite-retry",
-		//	Fn:       fn,
-		//	Retry:    RetryConfig{Active: true},
-		//	Interval: intervalCfg,
-		//},
+		{
+			ID:       "3-retry",
+			Fn:       fn,
+			Retry:    Retry{Active: true, Count: 3},
+			Interval: intervalCfg,
+		},
+		{
+			ID:       "infinite-retry",
+			Fn:       fn,
+			Retry:    Retry{Active: true},
+			Interval: intervalCfg,
+		},
 	}
 
-	err = p.Run()
+	err := p.Run()
 	assert.NoError(t, err)
 	defer p.Kill()
 
@@ -411,12 +406,12 @@ func TestRetryMechanismBehavior(t *testing.T) {
 	assert.Equal(t, JobStatus("error"), state1.Status)
 	assert.Equal(t, 1, state1.Failure, "no-retry should fail exactly once")
 
-	//state2 := metrics["3-retry"].(JobState)
-	//assert.Equal(t, JobStatus("error"), state2.Status)
-	//assert.Equal(t, 4, state2.Failure, "3-retry should fail once + 3 retries = 4 failures")
-	//
-	//state3 := metrics["infinite-retry"].(JobState)
-	//assert.GreaterOrEqual(t, state3.Failure, 5, "infinite-retry should have at least 5 failures")
+	state2 := metrics["3-retry"].(JobState)
+	assert.Equal(t, JobStatus("error"), state2.Status)
+	assert.Equal(t, 4, state2.Failure, "3-retry should fail once + 3 retries = 4 failures")
+
+	state3 := metrics["infinite-retry"].(JobState)
+	assert.GreaterOrEqual(t, state3.Failure, 5, "infinite-retry should have at least 5 failures")
 }
 
 func TestCronJobExecutionAndManualStop(t *testing.T) {
@@ -427,14 +422,13 @@ func TestCronJobExecutionAndManualStop(t *testing.T) {
 
 	firstRunDone := make(chan struct{})
 
-	pool, err := orb.CreatePool(PoolConfig{
+	pool := orb.CreatePool(PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 100 * time.Millisecond,
 	}, newDefaultMon())
-	assert.NoError(t, err)
 
 	jobID := "cron-increment-job"
-	jobCfg := JobConfig{
+	jobCfg := Job{
 		ID:   jobID,
 		Name: "Increment counter every minute",
 		Fn: func(ctrl FnControl) error {
@@ -450,10 +444,10 @@ func TestCronJobExecutionAndManualStop(t *testing.T) {
 
 			return nil
 		},
-		Interval: IntervalConfig{CronExpr: "*/1 * * * *"},
+		Interval: Interval{CronExpr: "*/1 * * * *"},
 	}
 
-	err = orb.AddJob(pool, jobCfg)
+	err := orb.AddJob(pool, jobCfg)
 	assert.NoError(t, err)
 
 	err = pool.Run()
@@ -497,22 +491,21 @@ func TestPool_GracefulKill(t *testing.T) {
 	ctx := context.Background()
 	orb := New(ctx)
 
-	pool, err := orb.CreatePool(PoolConfig{
+	pool := orb.CreatePool(PoolConfig{
 		MaxWorkers:    2,
 		CheckInterval: 50 * time.Millisecond,
 	}, newDefaultMon())
-	assert.NoError(t, err)
 
 	jobID := "kill-job"
 	started := make(chan struct{})
 
 	// Добавляем задачу
-	err = orb.AddJob(pool, JobConfig{
+	err := orb.AddJob(pool, Job{
 		ID:   jobID,
 		Name: "Kill Job Example",
 		Fn: func(ctrl FnControl) error {
 			fmt.Println("[kill-job] started")
-			close(started) // сигнал что задача запущена
+			close(started)
 			select {
 			case <-time.After(5 * time.Second):
 				fmt.Println("[kill-job] completed")
@@ -522,7 +515,7 @@ func TestPool_GracefulKill(t *testing.T) {
 				return ctrl.Context().Err()
 			}
 		},
-		Interval: IntervalConfig{Time: 1 * time.Minute}, // чтобы не было автоповтора
+		Interval: Interval{Time: 1 * time.Minute}, // чтобы не было автоповтора
 	})
 	assert.NoError(t, err)
 

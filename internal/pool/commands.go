@@ -92,7 +92,7 @@ func (p *Pool) ResumeJob(id string) error {
 	if err != nil {
 		return err
 	}
-	return job.Resume()
+	return job.Resume(p.Ctx)
 }
 
 // StopJob terminates execution of the specified job.

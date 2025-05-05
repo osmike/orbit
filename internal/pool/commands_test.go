@@ -20,7 +20,7 @@ func newTestPoolCommands(t *testing.T) *Pool {
 		CheckInterval: 10 * time.Millisecond,
 		IdleTimeout:   5 * time.Second,
 	}
-	p, _ := New(ctx, cfg, monitoring.New())
+	p := New(ctx, cfg, monitoring.New())
 	assert.Equal(t, p.MaxWorkers, cfg.MaxWorkers)
 	assert.Equal(t, p.CheckInterval, cfg.CheckInterval)
 	assert.Equal(t, p.IdleTimeout, cfg.IdleTimeout)

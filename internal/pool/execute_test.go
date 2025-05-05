@@ -35,7 +35,7 @@ func newTestPoolExecute(t *testing.T) *Pool {
 	}
 	mon := monitoring.New()
 
-	p, _ = New(context.Background(), cfg, mon)
+	p = New(context.Background(), cfg, mon)
 	return p
 }
 

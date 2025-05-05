@@ -127,7 +127,7 @@ func TestJob_Resume_FromPaused(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	err = j.Resume()
+	err = j.Resume(ctx)
 	assert.NoError(t, err)
 
 	select {
@@ -199,7 +199,7 @@ func TestJob_Resume_FromStopped(t *testing.T) {
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Stopped)
-	err = j.Resume()
+	err = j.Resume(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, domain.Waiting, j.GetStatus())
 }
@@ -218,7 +218,7 @@ func TestJob_Resume_FromInvalidState(t *testing.T) {
 	assert.NoError(t, err)
 
 	j.SetStatus(domain.Completed)
-	err = j.Resume()
+	err = j.Resume(ctx)
 	assert.ErrorIs(t, err, errs.ErrJobNotPausedOrStopped)
 }
 

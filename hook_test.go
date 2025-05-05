@@ -16,22 +16,21 @@ func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
 	scheduler := New(context.Background())
 	mon := newDefaultMon()
 
-	pool, err := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
-	assert.NoError(t, err)
 
 	called := false
 
-	withHook := func(ignore bool) JobConfig {
-		return JobConfig{
+	withHook := func(ignore bool) Job {
+		return Job{
 			ID: "job-hook-ignore-" + strconv.FormatBool(ignore),
 			Fn: func(ctrl FnControl) error {
 				called = true
 				return nil
 			},
-			Hooks: HooksFunc{
+			Hooks: Hooks{
 				OnStart: Hook{
 					Fn: func(ctrl FnControl, err error) error {
 						return errors.New("onStart failed")
@@ -39,7 +38,7 @@ func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
 					IgnoreError: ignore,
 				},
 			},
-			Interval: IntervalConfig{Time: 0},
+			Interval: Interval{Time: 0},
 		}
 	}
 
@@ -64,20 +63,19 @@ func TestHookOnError_IsCalled(t *testing.T) {
 	scheduler := New(context.Background())
 	mon := newDefaultMon()
 
-	pool, err := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
-	assert.NoError(t, err)
 
 	var capturedErr error
 
-	job := JobConfig{
+	job := Job{
 		ID: "job-with-error-hook",
 		Fn: func(ctrl FnControl) error {
 			return errors.New("simulated failure")
 		},
-		Hooks: HooksFunc{
+		Hooks: Hooks{
 			OnError: Hook{
 				Fn: func(ctrl FnControl, err error) error {
 					capturedErr = err
@@ -85,7 +83,7 @@ func TestHookOnError_IsCalled(t *testing.T) {
 				},
 			},
 		},
-		Interval: IntervalConfig{Time: 0},
+		Interval: Interval{Time: 0},
 	}
 
 	assert.NoError(t, scheduler.AddJob(pool, job))
@@ -122,9 +120,8 @@ func TestHookLoggingJobFlow(t *testing.T) {
 		onErrorHookExecuted   bool
 		finallyHookExecuted   bool
 	)
-	p, err := orb.CreatePool(PoolConfig{}, newDefaultMon())
+	p := orb.CreatePool(PoolConfig{}, newDefaultMon())
 	defer p.Kill()
-	assert.NoError(t, err, "creating pool with empty config")
 
 	fn := func(ctrl FnControl) error {
 		for {
@@ -149,10 +146,10 @@ func TestHookLoggingJobFlow(t *testing.T) {
 	finallyHook := hookFactory(&finallyHookExecuted, "[hook] finally: job finished...")
 
 	jobID := "job-with-hook"
-	jobCfg := JobConfig{
+	jobCfg := Job{
 		ID: jobID,
 		Fn: fn,
-		Hooks: HooksFunc{
+		Hooks: Hooks{
 			OnStart:   Hook{Fn: onStartHook},
 			OnStop:    Hook{Fn: onStopHook},
 			OnError:   Hook{Fn: onErrorHook},

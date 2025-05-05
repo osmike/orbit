@@ -136,5 +136,5 @@ func TestState_SetEndState_ResetsRetry(t *testing.T) {
 	s.currentRetry = 3
 	s.SetEndState(true, domain.Completed, nil)
 
-	assert.Equal(t, int64(0), s.currentRetry)
+	assert.Equal(t, int(0), s.currentRetry)
 }

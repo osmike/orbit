@@ -13,7 +13,7 @@ import (
 type state struct {
 	domain.StateDTO // Embedded state DTO for simplified access.
 	mu              sync.RWMutex
-	currentRetry    int64             // Tracks how many retries have been performed.
+	currentRetry    int               // Tracks how many retries have been performed.
 	mon             domain.Monitoring // Monitoring implementation for metric tracking.
 }
 

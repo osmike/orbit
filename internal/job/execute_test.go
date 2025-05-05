@@ -188,7 +188,7 @@ func TestJob_Execute_WithPauseAndResume(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		job.Pause(300 * time.Millisecond)
 		time.Sleep(50 * time.Millisecond)
-		job.Resume()
+		job.Resume(ctx)
 	}()
 
 	err = job.Execute()

@@ -66,7 +66,7 @@ type Job interface {
 	Pause(timeout time.Duration) error
 
 	// Resume resumes execution of a paused job, if applicable.
-	Resume() error
+	Resume(ctx context.Context) error
 
 	// LockJob acquires exclusive execution access to the job if it is available.
 	LockJob() bool
@@ -99,8 +99,7 @@ type Pool struct {
 //
 // Returns:
 //   - A fully initialized Pool instance ready for execution.
-//   - An error if the configuration is invalid.
-func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) (*Pool, error) {
+func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) *Pool {
 	if cfg.MaxWorkers == 0 {
 		cfg.MaxWorkers = domain.DEFAULT_NUM_WORKERS
 	}
@@ -119,7 +118,7 @@ func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) (*Pool, er
 		cancel: cancel,
 		Mon:    mon,
 		killed: false,
-	}, nil
+	}
 }
 
 // getJobByID retrieves a job instance by its unique identifier.

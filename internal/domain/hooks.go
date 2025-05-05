@@ -41,7 +41,7 @@ type Hooks struct {
 // and can either allow or block job execution depending on its result.
 type Hook struct {
 	// Fn is the function to be executed during the lifecycle stage.
-	// It receives the current FnControl and an optional error from the previous step (if applicable).
+	// It receives the current FnControl and an optional error for handling error in OnError hook (if applicable).
 	// It should return an error if the hook fails.
 	Fn func(ctrl FnControl, err error) error
 

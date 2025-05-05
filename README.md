@@ -1,4 +1,5 @@
 
+
 # 🚀 Orbit Scheduler – Task Scheduling Made Easy!
 
 [![Go](https://img.shields.io/badge/Made%20with-Go-blue)](https://golang.org)
@@ -458,6 +459,7 @@ func main() {
 }
 
 ```
+
 | Job ID           | Behavior                         | Failure Count  | Final Status |
 |:-----------------|:---------------------------------|:---------------|:-------------|
 | `no-retry`        | Fails once, no retries           | 1               | error        |
@@ -486,8 +488,8 @@ Orbit provides a reliable way to gracefully shutdown the entire pool and stop al
 When you call `pool.Kill()`:
 - All jobs are canceled through the shared `pool.Context()`.
 - Each job updates its metrics with
-    - `Status: stopped`
-    - `Error: errs.ErrPoolShutdown`
+  - `Status: stopped`
+  - `Error: errs.ErrPoolShutdown`
 - All jobs are removed from the pool.
 - The pool is marked as killed and cannot be restarted.
 
@@ -580,18 +582,18 @@ Collected metrics include:
 ## ⚙️ How monitoring works
 Monitoring updates happen automatically at every significant lifecycle event and periodically while a job is running:
 
-|Event	| What gets saved |
-| ----------|----------|
-Job creation |	Status set to `Waiting`, initial state saved
-Before job start (**Waiting state**) |	Orbit checks every `CheckInterval` (default 100ms) if `StartAt` time has arrived
-Job start |	Status changed to `Running`, `StartAt` recorded, `NextRun` scheduled, `Data` wiped clean
-During job execution (**Running state**) |	Every `CheckInterval`, Orbit updates `ExecutionTime` and saves metrics
-Execution error |	Status set to `Error`, execution error saved
-Successful completion |	Status set to `Completed`
-Retry after failure |	Status goes `Error` → `Completed` → `Waiting` automatically
-Exhausted retries |	Status set to `Ended`, job removed from the pool
-Pause/Resume |	Status updated to `Paused` and back to `Running`
-Pool shutdown |	All jobs forcibly set to `Stopped`, error `ErrPoolShutdown` attached
+| Event	                                   | What gets saved                                                                           |
+|------------------------------------------|-------------------------------------------------------------------------------------------|
+| Job creation                             | 	Status set to `Waiting`, initial state saved                                             |
+| Before job start (**Waiting state**)     | 	Orbit checks every `CheckInterval` (default 100ms) if `StartAt` time has arrived         |
+| Job start                                | 	Status changed to `Running`, `StartAt` recorded, `NextRun` scheduled, `Data` wiped clean |
+| During job execution (**Running state**) | 	Every `CheckInterval`, Orbit updates `ExecutionTime` and saves metrics                   |
+| Execution error                          | 	Status set to `Error`, execution error saved                                             |
+| Successful completion                    | 	Status set to `Completed`                                                                |
+| Retry after failure                      | 	Status goes `Error` → `Completed` → `Waiting` automatically                              |
+| Exhausted retries                        | 	Status set to `Ended`, job removed from the pool                                         |
+| Pause/Resume                             | 	Status updated to `Paused` and back to `Running`                                         |
+| Pool shutdown                            | 	All jobs forcibly set to `Stopped`, error `ErrPoolShutdown` attached                     |
 
 ✅ On every state change or execution time update, SaveMetrics() is called automatically.
 
@@ -626,7 +628,7 @@ flowchart TD
     classDef ended fill:#d6d8db,stroke:#6c757d,color:#000000,stroke-width:2px
     classDef stopped fill:#e2e3e5,stroke:#6c757d,color:#003366,stroke-width:2px
 
-    A[Job created] --> B[Status: Waiting<br/>SaveMetrics]
+    A[Job created<br/>SaveMetrics] --> B[Status: Waiting]
     B -->|CheckInterval| C{StartAt reached?}
     C -- No --> B
     C -- Yes --> D[Status: Running<br/>Wipe Data<br/>SaveMetrics]
@@ -751,70 +753,175 @@ orbit/
 ```
 
 ---
-## Public API
+## 📚 Public API Reference
 
-### Core Types
+### 1. Constants
 
-- **Scheduler** (struct)  
-  Manages pools and jobs. Entry point for users.
+| Constant               | 	Description                                           |
+|------------------------|--------------------------------------------------------|
+| DEFAULT_NUM_WORKERS    | 	Default number of concurrent workers per pool (1000). |
+| DEFAULT_CHECK_INTERVAL | 	Default interval to check job states (100ms).         |
+| DEFAULT_IDLE_TIMEOUT   | 	Default timeout for considering a job idle (100h).    |
+| DEFAULT_PAUSE_TIMEOUT  | 	Default timeout for pause acknowledgment (1s).        |
+| MAX_END_AT             | 	Maximum end time for job execution (year 9999).       |
 
-- **Pool** (struct)  
-  Handles concurrent execution and lifecycle of jobs.
+### 2. Types
+## `JobStatus` string
 
-- **JobConfig** (struct)  
-  Defines a job's function, scheduling, retries, and hooks.
+Represents a job’s lifecycle state:
+|Status | Description |
+| --- | --- |
+|`waiting` | The job is waiting to be executed.
+|`running` | The job is currently executing. **Pool** monitors a job currently in the **"Running"** state, checking for execution timeouts or runtime errors. If the job exceeds its configured timeout, it is marked as **Error**, triggering its finalization and metric recording.
+|`completed` | The job has finished execution successfully. When completed, pool checks if the job has future scheduled executions. If another execution is pending, the job state is reset to **"Waiting"**. Otherwise, the job is marked as **"Ended"**, indicating no further executions are planned.
+|`paused` | The job is temporarily paused. Pause method attempts to pause the currently running job by sending a non-blocking signal to `pauseCh` (retrive via `FnControl.PauseChan() <-chan struct{}`). Once the pause signal is sent, a timeout watcher is started in a separate goroutine. If the job fails to acknowledge the pause (by reading from `pauseCh`) within the specified timeout, the job's status is automatically reverted back to Running.
+|`stopped` |  The job has been explicitly stopped and will not run unless restarted. The method triggers immediate job cancellation via its execution context. When job is resumed via `pool.ResumeJob(id string)` its triggers recreation of job context usig pool context.
+|`ended` | The job reached its defined end condition (e.g., end time or retry limit). When ended, job is removing from the pool and this triggers graceful cleanup with canceling context and closing channels
+|`error` | The job encountered an error during execution. If retries are available, the job is rescheduled by setting status to Completed. If retries are exhausted or disabled, the job is finalized (Ended) and removed from the pool. (Note: In this case, execution errors are not stored in the final state.)
 
-- **IntervalConfig** (struct)  
-  Defines fixed-time or cron-based scheduling for a job.
+## `JobState` struct
 
-- **RetryConfig** (struct)  
-  Configures automatic retries for failed jobs.
+Represents the runtime state of a job.
+| Field  |  Type  |	Description |
+| --- | --- | --- |
+| JobID | `string` |	Unique identifier of the job associated with this state. |
+| StartAt | `time.Time` |	Timestamp when the job execution started. |
+| EndAt | `time.Time` |	Timestamp when the job execution ended (zero if still running). |
+| Error | `StateError` |	Captures any execution errors and lifecycle hook errors. |
+| Status | `JobStatus` |	Current lifecycle status (waiting, running, completed, error, etc.). |
+| ExecutionTime | `int64` |	Duration of the job's execution (in nanoseconds). |
+| Data | `map[string]interface{}` |	User-defined runtime key-value data captured during execution via FnControl.SaveData(). |
+| Success | `int`	| Number of times the job has completed successfully. |
+| Failure | `int`	| Number of times the job has failed. |
+| NextRun | `time.Time` |	Scheduled time for the next execution (zero for one-time jobs). |
 
-- **Hook** (struct)  
-  Defines a lifecycle event callback for a job.
+## `StateError` struct
 
-- **FnControl** (interface)  
-  Passed into jobs for context control and data sharing.
+Captures all types of errors that can occur during job execution.
 
-- **JobState** (struct)  
-  Contains runtime execution metadata of a job.
+| Field     | Type     | 	Description                                                              |
+|-----------|----------|---------------------------------------------------------------------------|
+| JobError  | `error`  | Error returned by the main job function (Fn).                             |
+| HookError | `struct` | containing errors from lifecycle hooks (OnStart, OnError, Finally, etc.). |
 
-### Public Functions
+Method:
+- `IsEmpty() bool`:
+  Returns true if both `JobError` and all `HookError` fields are `nil` — meaning no errors occurred during job execution or hooks.
 
-- **New(ctx context.Context) *Scheduler**  
-  Creates a new Orbit scheduler instance.
+## `HookError` struct
 
-- **(*Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) (*Pool, error)**  
-  Creates and configures a new execution pool.
+| Field     | Types   | 	Description                |
+|-----------|---------|-----------------------------|
+| OnStart   | `error` | 	Error from OnStart hook.   |
+| OnStop    | `error` | 	Error from OnStop hook.    |
+| OnError   | `error` | 	Error from OnError hook.   |
+| OnSuccess | `error` | 	Error from OnSuccess hook. |
+| OnPause   | `error` | 	Error from OnPause hook.   |
+| OnResume  | `error` | 	Error from OnResume hook.  |
+| Finally   | `error` | 	Error from Finally hook.   |
 
-- **(*Scheduler) AddJob(pool *Pool, cfg JobConfig) error**  
-  Adds a job to the specified execution pool.
+## `Job` struct
 
-### Pool Methods
+Configuration for creating a new job.
 
-- **(*Pool) Run() error**  
-  Starts the pool and schedules job executions.
+| Field    | Type                         | 	Description                                                              |
+|----------|------------------------------|---------------------------------------------------------------------------|
+| ID       | `string`                     | 	Required. Unique identifier of the job.                                  |
+| Name     | `string`                     | 	Optional human-readable name (defaults to ID if empty).                  |
+| Fn       | `func(ctrl FnControl) error` | 	Main execution function of the job, accepting a FnControl.               |
+| Interval | `Interval`                   | 	Defines when and how often the job should run (either interval or cron). |
+| Timeout  | `time.Duration`              | 	Maximum allowed time for job execution before cancellation.              |
+| StartAt  | `time.Time`                  | 	Earliest time when the job can start (defaults to time.Now() if unset).  |
+| EndAt    | `time.Time`                  | 	Latest time when the job can run (defaults to MAX_END_AT if unset).      |
+| Retry    | `Retry`                      | 	Retry behavior configuration on execution failure.                       |
+| Hooks    | `Hooks`                      | 	Optional lifecycle hooks for additional job logic at specific stages.    |
 
-- **(*Pool) Kill()**  
-  Gracefully terminates all jobs in the pool.
+## `Retry` struct
 
-- **(*Pool) AddJob(job Job) error**  
-  Adds a prepared Job instance into the pool.
+Defines retry behavior for failed jobs.
 
-- **(*Pool) RemoveJob(id string) error**  
-  Removes a job by ID from the pool.
+| Field          | Type   | 	Description                                                                                                                    |
+|----------------|--------|---------------------------------------------------------------------------------------------------------------------------------|
+| Active         | `bool` | 	Enables or disables retry logic. If `Active: false` → **No** retries.                                                          |
+| Count          | `int`  | 	Number of retry attempts allowed. `0` means infinite retries. If `Count > 0` → Retry up to Count times, then finalize the job. |
+| ResetOnSuccess | `bool` | 	If true, resets retry counter after a successful execution.                                                                    |
 
-- **(*Pool) PauseJob(id string, timeout time.Duration) error**  
-  Pauses a running job.
+## `Interval`
 
-- **(*Pool) ResumeJob(id string) error**  
-  Resumes a paused or stopped job.
+Defines job scheduling options.
 
-- **(*Pool) StopJob(id string) error**  
-  Forcefully stops a job.
+|Field	|Type |Description|
+| -- | -- | -- |
+|Time | `time.Duration` |	Fixed duration between executions (e.g., every 5 minutes). |
+| CronExpr | `string` |	Cron expression (e.g., `"0 0 * * *"` for midnight daily).|
 
-- **(*Pool) GetMetrics() map[string]interface{}**  
-  Retrieves collected job execution metrics.
+Only one of `Time` or `CronExpr` should be set; setting both results in an `error`.
+
+## `Hooks`
+
+Lifecycle hooks that can run custom logic at different points during a job's life.
+
+| Field     | Type   | 	Description                                                            |
+|-----------|--------|-------------------------------------------------------------------------|
+| OnStart   | `Hook` | 	Triggered right before the job starts.                                 |
+| OnStop    | `Hook` | 	Triggered when the job is stopped.                                     |
+| OnError   | `Hook` | 	Triggered if the main job function returns an error.                   |
+| OnSuccess | `Hook` | 	Triggered if the job completes successfully.                           |
+| OnPause   | `Hook` | 	Triggered when the job is paused.                                      |
+| OnResume  | `Hook` | 	Triggered when the job is resumed.                                     |
+| Finally   | `Hook` | 	Always triggered after job finishes, regardless of success or failure. |
+
+## `Hook`
+| Field       | Type                                    | 	Description                                                                                                                                                                                                     |
+|-------------|-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Fn          | `func(ctrl FnControl, err error) error` | `Fn` is the function to be executed during the lifecycle stage. It receives the current `FnControl` and an optional `error` for handling error in `OnError` hook. It should return an `error` if the hook fails. |
+| IgnoreError | `bool`                                  | `IgnoreError` determines whether hook execution errors should be ignored. If true, the job will proceed even if the hook fails. If false, the job will halt and treat the hook error as fatal.                   |
+
+## `FnControl`
+
+An interface providing control and metadata access inside job logic.
+
+| Method                             | 	Description                                               |
+|------------------------------------|------------------------------------------------------------|
+| `SaveData(map[string]interface{})` | Save custom runtime data (merged into `JobState.Data`).    |
+| `GetData() map[string]interface{}` | 	Retrieve a copy of the saved runtime data.                |
+| `Context() context.Context`        | 	Execution context to monitor for cancellation or timeout. |
+| `PauseChan() <-chan struct{}`      | 	Channel signaling the job to pause.                       |
+| `ResumeChan() <-chan struct{}`     | 	Channel signaling the job to resume after pause.          |
+
+## `PoolConfig`
+Defines configuration settings for initializing a scheduler execution pool.
+
+| Field         | 	Type            | 	Description                                                                                     |
+|---------------|------------------|--------------------------------------------------------------------------------------------------|
+| MaxWorkers    | 	`int`           | 	Maximum number of concurrent workers allowed. If `0`, defaults to `1000`.                       |
+| CheckInterval | 	`time.Duration` | 	How frequently the pool checks jobs for execution eligibility. If `0`, defaults to `100ms`.     |
+| IdleTimeout   | 	`time.Duration` | 	Maximum time a job can remain idle before being marked as inactive. If `0`, defaults to `100h`. |
+
+This configuration is passed to scheduler.CreatePool(...) and determines how the pool handles parallel execution and job polling frequency.
+
+## `Pool`
+Represents a job execution engine. Manages job scheduling, concurrency, and lifecycle control.
+
+| Method                                             | 	Description                                                                                          |
+|----------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `AddJob(job Job) error`	                           | Adds a job to the pool. Fails if the `ID` already exists or status is not `Waiting`.                  |
+| `RemoveJob(id string) error`	                      | Removes a job from the pool by `ID`. Does not stop the job explicitly.                                |
+| `PauseJob(id string, timeout time.Duration) error` | Sends a pause signal to a running job. Timeout defines how long the job has to acknowledge the pause. |
+| `ResumeJob(id string) error`	                      | Resumes a job from Paused or Stopped state. Recreates internal context from pool context.             |
+| `StopJob(id string) error`	                        | Cancels job execution and updates status to Stopped.                                                  |
+| `Run() error`	                                     | Starts the pool scheduler loop. Checks job states every CheckInterval and enforces MaxWorkers.        |
+| `Kill()`	                                          | Immediately stops all jobs, cancels context, and marks the pool as shut down permanently.             |
+| `GetMetrics() map[string]interface{}`	             | Returns collected metrics from the provided Monitoring implementation.                                |
+
+## `Scheduler`
+Main orchestrator for pool and job lifecycle.
+
+| Method                                             | 	Description                                                              |
+|----------------------------------------------------|---------------------------------------------------------------------------|
+| `New(ctx context.Context)`	                        | Creates a new `Orbit` instance. Used to initialize jobs and pools.        |
+| `CreatePool(cfg PoolConfig, mon Monitoring) *Pool` | 	Initializes a pool with the given configuration and monitoring strategy. |
+| `AddJob(pool *Pool, cfg JobConfig) error`          | 	Creates and registers a new job inside the given pool.                   |
 
 ___
 ## ⚖️ License

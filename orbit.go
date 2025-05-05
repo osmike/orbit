@@ -72,7 +72,7 @@ type PoolConfig = domain.Pool
 // job state control, and interaction with monitoring.
 type Pool = pool.Pool
 
-// JobConfig defines a job's configuration and execution details.
+// Job defines a job's configuration and execution details.
 //
 // Parameters:
 //   - ID: Unique identifier for the job.
@@ -84,7 +84,7 @@ type Pool = pool.Pool
 //   - EndAt: Latest time when the job can still run.
 //   - Retry: Retry behavior in case of job execution failures.
 //   - Hooks: Lifecycle hooks for custom logic execution.
-type JobConfig = domain.JobDTO
+type Job = domain.JobDTO
 
 // JobStatus represents the current lifecycle status of a job.
 //
@@ -100,22 +100,22 @@ type JobConfig = domain.JobDTO
 // Use this type to monitor and control job state transitions.
 type JobStatus = domain.JobStatus
 
-// IntervalConfig encapsulates job scheduling settings.
+// Interval encapsulates job scheduling settings.
 //
 // Parameters:
 //   - Time: Time between job executions (set 0 if using cron expression).
 //   - CronExpr: Cron expression defining job execution schedule (leave empty if using interval).
-type IntervalConfig = domain.Interval
+type Interval = domain.Interval
 
-// RetryConfig defines retry behavior for a job.
+// Retry defines retry behavior for a job.
 //
 // Parameters:
 //   - Count: Number of allowed retries after execution failure.
 //   - Time: Time interval between retries.
 //   - ResetOnSuccess: Flag to reset retries count after successful job execution.
-type RetryConfig = domain.Retry
+type Retry = domain.Retry
 
-// HooksFunc provides lifecycle hooks to inject custom logic at different job execution stages.
+// Hooks provides lifecycle hooks to inject custom logic at different job execution stages.
 //
 // Available hooks:
 //   - OnStart: Executed before job starts.
@@ -125,7 +125,7 @@ type RetryConfig = domain.Retry
 //   - OnPause: Executed when job is paused.
 //   - OnResume: Executed when job resumes after pause.
 //   - Finally: Always executed after job ends (successful, error, paused, stopped).
-type HooksFunc = domain.Hooks
+type Hooks = domain.Hooks
 
 // Hook defines a function that is executed during a specific lifecycle stage of a job.
 //
@@ -220,7 +220,7 @@ func New(ctx context.Context) *Scheduler {
 //
 // Returns:
 //   - Initialized and ready-to-use Pool instance.
-func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) (*Pool, error) {
+func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) *Pool {
 	if mon == nil {
 		mon = newDefaultMon()
 	}
@@ -239,7 +239,7 @@ func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) (*Pool, error) {
 // Returns:
 //   - nil on successful addition.
 //   - Error describing the failure reason otherwise.
-func (s *Scheduler) AddJob(pool *Pool, cfg JobConfig) error {
+func (s *Scheduler) AddJob(pool *Pool, cfg Job) error {
 	j, err := job.New(cfg, pool.Ctx, pool.Mon)
 	if err != nil {
 		return errs.New(errs.ErrAddingJob, fmt.Sprintf("err - %v", err))

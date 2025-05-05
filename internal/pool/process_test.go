@@ -26,7 +26,7 @@ func newTestJobProcess(t *testing.T, retryFlag bool, id string, status domain.Jo
 }
 
 func newTestPoolProcess() *Pool {
-	p, _ := New(context.Background(), domain.Pool{
+	p := New(context.Background(), domain.Pool{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, monitoring.New())

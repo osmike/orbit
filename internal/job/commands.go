@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"orbit/internal/domain"
 	errs "orbit/internal/error"
 	"time"
@@ -58,7 +59,7 @@ func (j *Job) Pause(timeout time.Duration) error {
 // Returns:
 //   - An error if the job is not in the Paused or Stopped state,
 //     or if the resume signal cannot be delivered (e.g., if the channel is full).
-func (j *Job) Resume() error {
+func (j *Job) Resume(ctx context.Context) error {
 	switch j.GetStatus() {
 	case domain.Paused:
 		select {
@@ -70,6 +71,7 @@ func (j *Job) Resume() error {
 			return errs.New(errs.ErrJobWrongStatus, "failed to send resume signal")
 		}
 	case domain.Stopped:
+		j.ctx, j.cancel = context.WithCancel(ctx)
 		j.SetStatus(domain.Waiting)
 		return j.runHook(j.Hooks.OnResume, errs.ErrOnResumeHook, nil)
 	default:
