@@ -914,7 +914,7 @@ Represents a job execution engine. Manages job scheduling, concurrency, and life
 | `Kill()`	                                          | Immediately stops all jobs, cancels context, and marks the pool as shut down permanently.             |
 | `GetMetrics() map[string]interface{}`	             | Returns collected metrics from the provided Monitoring implementation.                                |
 
-## `Scheduler`
+## `Orbit`
 Main orchestrator for pool and job lifecycle.
 
 | Method                                             | 	Description                                                              |

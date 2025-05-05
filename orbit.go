@@ -183,7 +183,7 @@ type Monitoring interface {
 	GetMetrics() map[string]interface{}
 }
 
-// Scheduler orchestrates the creation and management of job execution pools and scheduled jobs.
+// Orbit orchestrates the creation and management of job execution pools and scheduled jobs.
 //
 // Provides a simplified API for pool creation, job addition, and lifecycle management.
 //
@@ -196,7 +196,7 @@ type Monitoring interface {
 //	scheduler := orbit.New(context.Background())
 //	pool := scheduler.CreatePool(config, nil)
 //	scheduler.AddJob(pool, jobConfig)
-type Scheduler struct {
+type Orbit struct {
 	ctx context.Context // Parent context to manage scheduler lifecycle.
 }
 
@@ -207,8 +207,8 @@ type Scheduler struct {
 //
 // Returns:
 //   - Pointer to a new Scheduler instance.
-func New(ctx context.Context) *Scheduler {
-	return &Scheduler{ctx}
+func New(ctx context.Context) *Orbit {
+	return &Orbit{ctx}
 }
 
 // CreatePool creates and configures a new job execution pool.
@@ -220,7 +220,7 @@ func New(ctx context.Context) *Scheduler {
 //
 // Returns:
 //   - Initialized and ready-to-use Pool instance.
-func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) *Pool {
+func (s *Orbit) CreatePool(cfg PoolConfig, mon Monitoring) *Pool {
 	if mon == nil {
 		mon = newDefaultMon()
 	}
@@ -239,7 +239,7 @@ func (s *Scheduler) CreatePool(cfg PoolConfig, mon Monitoring) *Pool {
 // Returns:
 //   - nil on successful addition.
 //   - Error describing the failure reason otherwise.
-func (s *Scheduler) AddJob(pool *Pool, cfg Job) error {
+func (s *Orbit) AddJob(pool *Pool, cfg Job) error {
 	j, err := job.New(cfg, pool.Ctx, pool.Mon)
 	if err != nil {
 		return errs.New(errs.ErrAddingJob, fmt.Sprintf("err - %v", err))
