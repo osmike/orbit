@@ -2,8 +2,8 @@ package pool
 
 import (
 	"errors"
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
+	"github.com/osmike/orbit/internal/domain"
+	errs "github.com/osmike/orbit/internal/error"
 	"sync"
 )
 

@@ -2,7 +2,7 @@ package job
 
 import (
 	"fmt"
-	errs "orbit/internal/error"
+	errs "github.com/osmike/orbit/internal/error"
 	"strconv"
 	"strings"
 	"time"
