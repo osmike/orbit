@@ -49,10 +49,10 @@ package orbit
 import (
 	"context"
 	"fmt"
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
-	"orbit/internal/job"
-	"orbit/internal/pool"
+	"github.com/osmike/orbit/internal/domain"
+	errs "github.com/osmike/orbit/internal/error"
+	"github.com/osmike/orbit/internal/job"
+	"github.com/osmike/orbit/internal/pool"
 )
 
 // PoolConfig encapsulates the configuration settings required to initialize a new scheduler pool.

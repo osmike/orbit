@@ -42,47 +42,47 @@ Here's how easy it is to get started:
 package main
 
 import (
-    "context"
-    "fmt"
-    "github.com/osmike/orbit"
-    "time"
+  "context"
+  "fmt"
+  "github.com/osmike/orbit"
+  "time"
 )
 
 func main() {
-    ctx := context.Background()
-    orb := orbit.New(ctx)
+  ctx := context.Background()
+  orb := orbit.New(ctx)
 
-    pool, _ := orb.CreatePool(ctx, orbit.PoolConfig{
-		// MaxWorkers sets the maximum number of concurrent workers allowed to execute jobs simultaneously.
-		// Higher values can improve throughput for CPU-bound or I/O-bound tasks, but might consume more system resources.
-		// Default value:
-		MaxWorkers: 1000,
-		// IdleTimeout specifies the duration after which a job that remains idle
-		// (not executed or scheduled for immediate execution) will be marked as inactive.
-		// This helps optimize resource usage and prevents accumulation of stale tasks.
-		// Default value:
-		IdleTimeout: 100 * time.Hour,
-		// CheckInterval defines how frequently the pool checks for jobs that are ready for execution or require status updates.
-		// Short intervals result in more responsive job execution at the expense of slightly increased CPU utilization.
-		CheckInterval: 100 * time.Millisecond,
-    }, nil)
+  pool := orb.CreatePool(ctx, orbit.PoolConfig{
+    // MaxWorkers sets the maximum number of concurrent workers allowed to execute jobs simultaneously.
+    // Higher values can improve throughput for CPU-bound or I/O-bound tasks, but might consume more system resources.
+    // Default value:
+    MaxWorkers: 1000,
+    // IdleTimeout specifies the duration after which a job that remains idle
+    // (not executed or scheduled for immediate execution) will be marked as inactive.
+    // This helps optimize resource usage and prevents accumulation of stale tasks.
+    // Default value:
+    IdleTimeout: 100 * time.Hour,
+    // CheckInterval defines how frequently the pool checks for jobs that are ready for execution or require status updates.
+    // Short intervals result in more responsive job execution at the expense of slightly increased CPU utilization.
+    CheckInterval: 100 * time.Millisecond,
+  }, nil)
 
-    jobCfg := orbit.JobConfig{
-        ID:   "hello-world",
-        Name: "Print Hello World",
-        Fn: func(ctrl orbit.FnControl) error {
-            fmt.Println("Hello, World!")
-            return nil
-        },
-        Interval: orbit.IntervalConfig{Time: 5 * time.Second},
-    }
+  jobCfg := orbit.Job{
+    ID:   "hello-world",
+    Name: "Print Hello World",
+    Fn: func(ctrl orbit.FnControl) error {
+      fmt.Println("Hello, World!")
+      return nil
+    },
+    Interval: orbit.Interval{Time: 5 * time.Second},
+  }
 
-    orb.AddJob(pool, jobCfg)
-	// Run starts the main controlling goroutine for the pool.
-	// It continuously manages job scheduling, execution, and lifecycle events.
-    pool.Run()
+  orb.AddJob(pool, jobCfg)
+  // Run starts the main controlling goroutine for the pool.
+  // It continuously manages job scheduling, execution, and lifecycle events.
+  pool.Run()
 
-    select {} // Keep running indefinitely
+  select {} // Keep running indefinitely
 }
 ```
 
@@ -105,70 +105,70 @@ This example demonstrates how to:
 jobID := "weekly-upload"
 
 onStartFn := func(ctrl orb.FnControl) error {
-    rowCnt := db.GetRowCount() // Get total rows to process from DB
+rowCnt := db.GetRowCount() // Get total rows to process from DB
 
-    // Save the job's initial state
-    ctrl.SaveData(map[string]interface{}{
-        "rowCnt":  rowCnt,
-        "uploaded": 0, // progress tracker
-    })
+// Save the job's initial state
+ctrl.SaveData(map[string]interface{}{
+"rowCnt":  rowCnt,
+"uploaded": 0, // progress tracker
+})
 
-    fmt.Printf("Job %s started, row count: %d\n", jobID, rowCnt)
-    return nil
+fmt.Printf("Job %s started, row count: %d\n", jobID, rowCnt)
+return nil
 }
 
 
 // mainFn handles the batch upload in chunks of 1000 rows.
 // It supports pause/resume, stateful progress, and clean shutdown.
 mainFn := func(ctrl orb.FnControl) error {
-    for {
-        select {
-        case <-ctrl.PauseChan():
-            fmt.Println("Paused... waiting for resume")
+for {
+select {
+case <-ctrl.PauseChan():
+fmt.Println("Paused... waiting for resume")
 
-            <-ctrl.ResumeChan()
-            fmt.Println("Resumed, reconnecting to DB...")
-            reconnectToDB()
+<-ctrl.ResumeChan()
+fmt.Println("Resumed, reconnecting to DB...")
+reconnectToDB()
 
-        case <-ctrl.Context().Done():
-            return ctrl.Context().Err() // exit cleanly if context is cancelled
+case <-ctrl.Context().Done():
+return ctrl.Context().Err() // exit cleanly if context is cancelled
 
-        default:
-            // Read current data
-            data := ctrl.GetData()
+default:
+// Read current data
+data := ctrl.GetData()
 
-            uploaded := data["uploaded"].(int)
-            total := data["rowCnt"].(int)
+uploaded := data["uploaded"].(int)
+total := data["rowCnt"].(int)
 
-            // Simulate batch processing
-            uploaded += db.BatchInsert(1000)
+// Simulate batch processing
+uploaded += db.BatchInsert(1000)
 
-            // Persist updated data in job state
-            ctrl.SaveData(map[string]interface{}{
-                "rowCnt":  total,
-                "uploaded": uploaded,
-            })
+// Persist updated data in job state
+ctrl.SaveData(map[string]interface{}{
+"rowCnt":  total,
+"uploaded": uploaded,
+})
 
-            // Stop the job when all data is uploaded
-            if uploaded >= total {
-                fmt.Println("✅ All data uploaded successfully.")
-                return nil
-            }
-        }
-    }
+// Stop the job when all data is uploaded
+if uploaded >= total {
+fmt.Println("✅ All data uploaded successfully.")
+return nil
 }
-  
+}
+}
+}
+
 ```
 ***📌 This pattern is ideal for large ETL-like jobs, syncing data from external systems, or anything that may be paused and resumed on demand.***
 
 Then configure the job like this:
 ```go
-jobCfg := orbit.JobConfig{
-    ID:       jobID,
-    Name:     "Weekly DB Upload",
-    Fn:       mainFn,
-    OnStart:  onStartFn,
-    Cron:     "0 20 * * 5", // Every Friday at 20:00 (8 PM)
+jobCfg := orbit.Job{
+ID:       jobID,
+Name:     "Weekly DB Upload",
+Fn:       mainFn,
+OnStart:  onStartFn,
+Cron:     "0 20 * * 5", // Every Friday at 20:00 (8 PM)
 }
 ```
 And add it to a running pool:
@@ -195,13 +195,13 @@ You can pause and resume a running job dynamically using the pool's control meth
 // and provides a safe buffer for graceful transitions.
 err := pool.PauseJob("weekly-upload", 10*time.Second)
 if err != nil {
-    log.Println("Pause failed:", err)
+log.Println("Pause failed:", err)
 }
 
 // Resume the job early (before the timeout ends)
 err = pool.ResumeJob("weekly-upload")
 if err != nil {
-    log.Println("Resume failed:", err)
+log.Println("Resume failed:", err)
 }
 ```
 **🔎 Why the Timeout Matters?**
@@ -229,23 +229,23 @@ Let's say you want only **one job at a time** to run. You add 3 jobs with the sa
 ```go
 orb := orbit.New(context.Background())
 
-pool, _ := orb.CreatePool(context.Background(), orbit.PoolConfig{
-    MaxWorkers:    1,                       // allow only 1 job at a time
-    CheckInterval: 50 * time.Millisecond,  // quick job scanning
+pool := orb.CreatePool(context.Background(), orbit.PoolConfig{
+MaxWorkers:    1,                       // allow only 1 job at a time
+CheckInterval: 50 * time.Millisecond,  // quick job scanning
 }, nil)
 
-createJob := func(id string, delay time.Duration) orbit.JobConfig {
-    return orbit.JobConfig{
-        ID:       id,
-        Name:     fmt.Sprintf("Job %s", id),
-        Interval: orbit.IntervalConfig{Time: time.Second}, // runs every 1s
-        Fn: func(ctrl orbit.FnControl) error {
-            fmt.Printf("[%s] Started at %v\n", id, time.Now())
-            time.Sleep(time.Second)
-            fmt.Printf("[%s] Finished at %v\n", id, time.Now())
-            return nil
-        },
-    }
+createJob := func(id string, delay time.Duration) orbit.Job {
+return orbit.Job{
+ID:       id,
+Name:     fmt.Sprintf("Job %s", id),
+Interval: orbit.Interval{Time: time.Second}, // runs every 1s
+Fn: func(ctrl orbit.FnControl) error {
+fmt.Printf("[%s] Started at %v\n", id, time.Now())
+time.Sleep(time.Second)
+fmt.Printf("[%s] Finished at %v\n", id, time.Now())
+return nil
+},
+}
 }
 
 orb.AddJob(pool, createJob("job1", 0))
@@ -307,59 +307,59 @@ This example demonstrates a full lifecycle job that logs execution through each 
 ```go
 var logger = log.New(os.Stdout, "", log.LstdFlags)
 
-job := orbit.JobConfig{
-    ID:   "hooked-job",
-    Name: "Lifecycle Logging Demo",
-    Interval: orbit.IntervalConfig{Time: 1 * time.Second},
-    Fn: func(ctrl orbit.FnControl) error {
-        logger.Println("[main] syncing data...")
-        time.Sleep(300 * time.Millisecond)
-        return errors.New("sync failed") // force error for demo
-    },
-    Hooks: orbit.HooksFunc{
-        OnStart: orbit.Hook{
-            Fn: func(ctrl orbit.FnControl, err error) error {
-                logger.Println("[hook] OnStart: job starting...")
-                return nil
-            },
-        },
-        OnPause: orbit.Hook{
-            Fn: func(ctrl orbit.FnControl, err error) error {
-                logger.Println("[hook] OnPause: job paused")
-                return nil
-            },
-        },
-        OnResume: orbit.Hook{
-            Fn: func(ctrl orbit.FnControl, err error) error {
-                logger.Println("[hook] OnResume: job resumed")
-                return nil
-            },
-        },
-        OnStop: orbit.Hook{
-            Fn: func(ctrl orbit.FnControl, err error) error {
-                logger.Println("[hook] OnStop: job stopped")
-                return nil
-            },
-        },
-        OnSuccess: orbit.Hook{
-            Fn: func(ctrl orbit.FnControl, err error) error {
-                logger.Println("[hook] OnSuccess: job succeeded")
-                return nil
-            },
-        },
-        OnError: orbit.Hook{
-            Fn: func(ctrl orbit.FnControl, err error) error {
-                logger.Printf("[hook] OnError: job failed: %v\n", err)
-                return nil
-            },
-        },
-        Finally: orbit.Hook{
-            Fn: func(ctrl orbit.FnControl, err error) error {
-                logger.Println("[hook] Finally: job finished")
-                return nil
-            },
-        },
-    },
+job := orbit.Job{
+ID:   "hooked-job",
+Name: "Lifecycle Logging Demo",
+Interval: orbit.Interval{Time: 1 * time.Second},
+Fn: func(ctrl orbit.FnControl) error {
+logger.Println("[main] syncing data...")
+time.Sleep(300 * time.Millisecond)
+return errors.New("sync failed") // force error for demo
+},
+Hooks: orbit.Hooks{
+OnStart: orbit.Hook{
+Fn: func(ctrl orbit.FnControl, err error) error {
+logger.Println("[hook] OnStart: job starting...")
+return nil
+},
+},
+OnPause: orbit.Hook{
+Fn: func(ctrl orbit.FnControl, err error) error {
+logger.Println("[hook] OnPause: job paused")
+return nil
+},
+},
+OnResume: orbit.Hook{
+Fn: func(ctrl orbit.FnControl, err error) error {
+logger.Println("[hook] OnResume: job resumed")
+return nil
+},
+},
+OnStop: orbit.Hook{
+Fn: func(ctrl orbit.FnControl, err error) error {
+logger.Println("[hook] OnStop: job stopped")
+return nil
+},
+},
+OnSuccess: orbit.Hook{
+Fn: func(ctrl orbit.FnControl, err error) error {
+logger.Println("[hook] OnSuccess: job succeeded")
+return nil
+},
+},
+OnError: orbit.Hook{
+Fn: func(ctrl orbit.FnControl, err error) error {
+logger.Printf("[hook] OnError: job failed: %v\n", err)
+return nil
+},
+},
+Finally: orbit.Hook{
+Fn: func(ctrl orbit.FnControl, err error) error {
+logger.Println("[hook] Finally: job finished")
+return nil
+},
+},
+},
 }
 ```
 #### ✅ Sample Output:
@@ -390,72 +390,72 @@ Let's configure three jobs with different retry strategies:
 package main
 
 import (
-    "context"
-    "errors"
-    "fmt"
-    "time"
+  "context"
+  "errors"
+  "fmt"
+  "time"
 
-    "github.com/osmike/orbit"
+  "github.com/osmike/orbit"
 )
 
 func main() {
-    orb := orbit.New(context.Background())
+  orb := orbit.New(context.Background())
 
-    pool, _ := orb.CreatePool(context.Background(), orbit.PoolConfig{
-        MaxWorkers:    3,
-        CheckInterval: 10 * time.Millisecond,
-    }, nil)
+  pool := orb.CreatePool(context.Background(), orbit.PoolConfig{
+    MaxWorkers:    3,
+    CheckInterval: 10 * time.Millisecond,
+  }, nil)
 
-    failFn := func(ctrl orbit.FnControl) error {
-        return errors.New("oops, failed!")
-    }
+  failFn := func(ctrl orbit.FnControl) error {
+    return errors.New("oops, failed!")
+  }
 
-    // Define three jobs:
-    jobs := []orbit.JobConfig{
-        {
-            ID: "no-retry",
-            Fn: failFn,
-            Retry: orbit.RetryConfig{
-                Active: false, // No retries — fail once and stop
-            },
-            Interval: orbit.IntervalConfig{Time: 50 * time.Millisecond},
-        },
-        {
-            ID: "three-retry",
-            Fn: failFn,
-            Retry: orbit.RetryConfig{
-                Active: true,
-                Count:  3, // Retry up to 3 times after initial failure
-            },
-            Interval: orbit.IntervalConfig{Time: 50 * time.Millisecond},
-        },
-        {
-            ID: "infinite-retry",
-            Fn: failFn,
-            Retry: orbit.RetryConfig{
-                Active: true,
-                Count:  0, // 0 means infinite retries!
-            },
-            Interval: orbit.IntervalConfig{Time: 50 * time.Millisecond},
-        },
-    }
+  // Define three jobs:
+  jobs := []orbit.Job{
+    {
+      ID: "no-retry",
+      Fn: failFn,
+      Retry: orbit.Retry{
+        Active: false, // No retries — fail once and stop
+      },
+      Interval: orbit.Interval{Time: 50 * time.Millisecond},
+    },
+    {
+      ID: "three-retry",
+      Fn: failFn,
+      Retry: orbit.Retry{
+        Active: true,
+        Count:  3, // Retry up to 3 times after initial failure
+      },
+      Interval: orbit.Interval{Time: 50 * time.Millisecond},
+    },
+    {
+      ID: "infinite-retry",
+      Fn: failFn,
+      Retry: orbit.Retry{
+        Active: true,
+        Count:  0, // 0 means infinite retries!
+      },
+      Interval: orbit.Interval{Time: 50 * time.Millisecond},
+    },
+  }
 
-    pool.Run()
+  pool.Run()
 
-    // Add jobs to the pool
-    for _, job := range jobs {
-        _ = orb.AddJob(pool, job)
-    }
+  // Add jobs to the pool
+  for _, job := range jobs {
+    _ = orb.AddJob(pool, job)
+  }
 
-    // Let them run for a while
-    time.Sleep(600 * time.Millisecond)
+  // Let them run for a while
+  time.Sleep(600 * time.Millisecond)
 
-    // Retrieve metrics
-    metrics := pool.GetMetrics()
+  // Retrieve metrics
+  metrics := pool.GetMetrics()
 
-    for id, m := range metrics {
-        fmt.Printf("Job %s: failures = %d, status = %s\n", id, m.(orbit.JobState).Failure, m.(orbit.JobState).Status)
-    }
+  for id, m := range metrics {
+    fmt.Printf("Job %s: failures = %d, status = %s\n", id, m.(orbit.JobState).Failure, m.(orbit.JobState).Status)
+  }
 }
 
 ```
@@ -499,46 +499,46 @@ Let's create a simple pool with one long-running job and gracefully shut it down
 package main
 
 import (
-    "context"
-    "fmt"
-    "time"
+  "context"
+  "fmt"
+  "time"
 
-    "github.com/osmike/orbit"
+  "github.com/osmike/orbit"
 )
 
 func main() {
-    orb := orbit.New(context.Background())
+  orb := orbit.New(context.Background())
 
-    pool, _ := orb.CreatePool(orbit.PoolConfig{
-        MaxWorkers:    1,
-        CheckInterval: 50 * time.Millisecond,
-    }, nil)
+  p := orb.CreatePool(orbit.PoolConfig{
+    MaxWorkers:    1,
+    CheckInterval: 50 * time.Millisecond,
+  }, nil)
 
-    longJob := orbit.JobConfig{
-        ID: "long-running-job",
-        Fn: func(ctrl orbit.FnControl) error {
-            fmt.Println("Job started")
-            <-ctrl.Context().Done()
-            fmt.Println("Job canceled:", ctrl.Context().Err())
-            return ctrl.Context().Err()
-        },
-        Interval: orbit.IntervalConfig{Time: 1 * time.Hour}, // Never intended to complete
-    }
+  longJob := orbit.Job{
+    ID: "long-running-job",
+    Fn: func(ctrl orbit.FnControl) error {
+      fmt.Println("Job started")
+      <-ctrl.Context().Done()
+      fmt.Println("Job canceled:", ctrl.Context().Err())
+      return ctrl.Context().Err()
+    },
+    Interval: orbit.Interval{Time: 1 * time.Hour}, // Never intended to complete
+  }
 
-    _ = orb.AddJob(pool, longJob)
+  _ = orb.AddJob(pool, longJob)
 
-    pool.Run()
+  pool.Run()
 
-    time.Sleep(100 * time.Millisecond) // Give some time to start
+  time.Sleep(100 * time.Millisecond) // Give some time to start
 
-    pool.Kill() // Gracefully shutdown
+  pool.Kill() // Gracefully shutdown
 
-    time.Sleep(100 * time.Millisecond) // Wait a little for cleanup
+  time.Sleep(100 * time.Millisecond) // Wait a little for cleanup
 
-    // Trying to run the pool again will fail
-    if err := pool.Run(); err != nil {
-        fmt.Println("Cannot restart killed pool:", err)
-    }
+  // Trying to run the pool again will fail
+  if err := pool.Run(); err != nil {
+    fmt.Println("Cannot restart killed pool:", err)
+  }
 }
 ```
 | Step                   | What Happens                                          |
@@ -606,8 +606,8 @@ Just pass your custom implementation when creating a Pool:
 ```go
 myMon := NewCustomMonitoring()
 
-pool, _ := orb.CreatePool(orbit.PoolConfig{
-    MaxWorkers: 10,
+pool := orb.CreatePool(orbit.PoolConfig{
+MaxWorkers: 10,
 }, myMon)
 ```
 If you don't provide a custom monitor, Orbit uses a built-in in-memory monitoring system by default.
@@ -668,65 +668,65 @@ Here’s a real-world example of integrating Orbit with Prometheus using its off
 package mymonitoring
 
 import (
-    "orbit"
-    "github.com/prometheus/client_golang/prometheus"
+  "orbit"
+  "github.com/prometheus/client_golang/prometheus"
 )
 
 // PrometheusMonitoring implements the Monitoring interface and exports Orbit job metrics to Prometheus.
 type PrometheusMonitoring struct {
-    jobExecutionTime *prometheus.GaugeVec
-    jobSuccessCount  *prometheus.CounterVec
-    jobFailureCount  *prometheus.CounterVec
+  jobExecutionTime *prometheus.GaugeVec
+  jobSuccessCount  *prometheus.CounterVec
+  jobFailureCount  *prometheus.CounterVec
 }
 
 // NewPrometheusMonitoring initializes Prometheus metrics and registers them.
 func NewPrometheusMonitoring() *PrometheusMonitoring {
-    pm := &PrometheusMonitoring{
-        jobExecutionTime: prometheus.NewGaugeVec(
-            prometheus.GaugeOpts{
-                Name: "orbit_job_execution_time_seconds",
-                Help: "Execution time of a job in seconds",
-            },
-            []string{"job_id"},
-        ),
-        jobSuccessCount: prometheus.NewCounterVec(
-            prometheus.CounterOpts{
-                Name: "orbit_job_success_total",
-                Help: "Total number of successful job completions",
-            },
-            []string{"job_id"},
-        ),
-        jobFailureCount: prometheus.NewCounterVec(
-            prometheus.CounterOpts{
-                Name: "orbit_job_failure_total",
-                Help: "Total number of failed job executions",
-            },
-            []string{"job_id"},
-        ),
-    }
+  pm := &PrometheusMonitoring{
+    jobExecutionTime: prometheus.NewGaugeVec(
+      prometheus.GaugeOpts{
+        Name: "orbit_job_execution_time_seconds",
+        Help: "Execution time of a job in seconds",
+      },
+      []string{"job_id"},
+    ),
+    jobSuccessCount: prometheus.NewCounterVec(
+      prometheus.CounterOpts{
+        Name: "orbit_job_success_total",
+        Help: "Total number of successful job completions",
+      },
+      []string{"job_id"},
+    ),
+    jobFailureCount: prometheus.NewCounterVec(
+      prometheus.CounterOpts{
+        Name: "orbit_job_failure_total",
+        Help: "Total number of failed job executions",
+      },
+      []string{"job_id"},
+    ),
+  }
 
-    // Register metrics
-    prometheus.MustRegister(pm.jobExecutionTime)
-    prometheus.MustRegister(pm.jobSuccessCount)
-    prometheus.MustRegister(pm.jobFailureCount)
+  // Register metrics
+  prometheus.MustRegister(pm.jobExecutionTime)
+  prometheus.MustRegister(pm.jobSuccessCount)
+  prometheus.MustRegister(pm.jobFailureCount)
 
-    return pm
+  return pm
 }
 
 // SaveMetrics collects and exports metrics from the given JobState.
 func (pm *PrometheusMonitoring) SaveMetrics(dto orbit.JobState) {
-    jobID := dto.JobID
+  jobID := dto.JobID
 
-    pm.jobExecutionTime.WithLabelValues(jobID).Set(float64(dto.ExecutionTime) / 1e9) // nanoseconds -> seconds
-    pm.jobSuccessCount.WithLabelValues(jobID).Add(float64(dto.Success))
-    pm.jobFailureCount.WithLabelValues(jobID).Add(float64(dto.Failure))
+  pm.jobExecutionTime.WithLabelValues(jobID).Set(float64(dto.ExecutionTime) / 1e9) // nanoseconds -> seconds
+  pm.jobSuccessCount.WithLabelValues(jobID).Add(float64(dto.Success))
+  pm.jobFailureCount.WithLabelValues(jobID).Add(float64(dto.Failure))
 }
 
 // GetMetrics (optional) returns dummy information since Prometheus pulls metrics externally.
 func (pm *PrometheusMonitoring) GetMetrics() map[string]interface{} {
-    return map[string]interface{}{
-        "info": "Metrics are available at the Prometheus endpoint",
-    }
+  return map[string]interface{}{
+    "info": "Metrics are available at the Prometheus endpoint",
+  }
 }
 ```
 ### 🔥 Key points:
@@ -921,7 +921,7 @@ Main orchestrator for pool and job lifecycle.
 |----------------------------------------------------|---------------------------------------------------------------------------|
 | `New(ctx context.Context)`	                        | Creates a new `Orbit` instance. Used to initialize jobs and pools.        |
 | `CreatePool(cfg PoolConfig, mon Monitoring) *Pool` | 	Initializes a pool with the given configuration and monitoring strategy. |
-| `AddJob(pool *Pool, cfg JobConfig) error`          | 	Creates and registers a new job inside the given pool.                   |
+| `AddJob(pool *Pool, cfg Job) error`          | 	Creates and registers a new job inside the given pool.                   |
 
 ___
 ## ⚖️ License
