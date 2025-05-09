@@ -1,11 +1,12 @@
-package pool
+package pool_test
 
 import (
 	"context"
 	"github.com/osmike/orbit/internal/domain"
 	errs "github.com/osmike/orbit/internal/error"
 	"github.com/osmike/orbit/internal/job"
-	"github.com/osmike/orbit/monitoring"
+	"github.com/osmike/orbit/internal/pool"
+	"github.com/osmike/orbit/test/monitoring"
 	"sync"
 	"testing"
 	"time"
@@ -13,29 +14,24 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestJobExecute(t *testing.T, id string, fn domain.Fn, status domain.JobStatus, ctx context.Context, mon domain.Monitoring) *job.Job {
-
-	j, err := job.New(domain.JobDTO{
+func newTestJobExecute(id string, fn domain.Fn) domain.JobDTO {
+	return domain.JobDTO{
 		ID:       id,
 		Interval: domain.Interval{Time: 10 * time.Millisecond},
 		Fn:       fn,
-	}, ctx, mon)
-	assert.NoError(t, err)
-	j.SetStatus(status)
-	return j
+	}
 }
 
-func newTestPoolExecute(t *testing.T) *Pool {
+func newTestPoolExecute(t *testing.T) *pool.Pool {
 	t.Helper()
-
-	p := &Pool{}
 	cfg := domain.Pool{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}
 	mon := monitoring.New()
 
-	p = New(context.Background(), cfg, mon)
+	p, err := pool.New(context.Background(), cfg, mon, job.New)
+	assert.NoError(t, err)
 	return p
 }
 
@@ -44,20 +40,24 @@ func TestExecute_Success(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{}
-
+	var err error
+	var j domain.Job
 	done := make(chan struct{})
 
-	j := newTestJobExecute(t, "exec-success", func(ctrl domain.FnControl) error {
+	jCfg := newTestJobExecute("exec-success", func(ctrl domain.FnControl) error {
 		done <- struct{}{}
 		return nil
-	}, domain.Waiting, p.Ctx, p.Mon)
+	})
 
-	p.execute(j, sem, wg)
+	err = p.AddJob(jCfg)
+	j, err = p.GetJobByID(jCfg.ID)
+	assert.NoError(t, err)
+	p.Execute(j, sem, wg)
 
 	select {
 	case <-done:
 	case <-time.After(1 * time.Second):
-		t.Fatal("job did not execute successfully")
+		t.Fatal("job did not Execute successfully")
 	}
 
 	wg.Wait()
@@ -70,31 +70,24 @@ func TestExecute_TooEarly(t *testing.T) {
 	p := newTestPoolExecute(t)
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, 1)
+	var j domain.Job
+	var err error
+	jCfg := domain.JobDTO{
+		ID:      "exec-too-early",
+		Fn:      func(ctrl domain.FnControl) error { return nil },
+		StartAt: time.Now().Add(2 * time.Second),
+		Interval: domain.Interval{
+			Time: 10 * time.Millisecond,
+		},
+	}
+	err = p.AddJob(jCfg)
+	j, err = p.GetJobByID(jCfg.ID)
+	assert.NoError(t, err)
 
-	j := newTestJobExecute(t, "exec-too-early", func(ctrl domain.FnControl) error {
-		return nil
-	}, domain.Waiting, p.Ctx, p.Mon)
-	j.StartAt = time.Now().Add(2 * time.Second)
-
-	p.execute(j, sem, wg)
+	p.Execute(j, sem, wg)
 
 	time.Sleep(100 * time.Millisecond)
 	assert.Equal(t, domain.Waiting, j.GetStatus())
-}
-
-func TestExecute_InvalidStatus(t *testing.T) {
-	p := newTestPoolExecute(t)
-	wg := &sync.WaitGroup{}
-	sem := make(chan struct{}, 1)
-	sem <- struct{}{}
-	j := newTestJobExecute(t, "exec-wrong-status", func(ctrl domain.FnControl) error {
-		return nil
-	}, domain.Completed, p.Ctx, p.Mon)
-
-	p.execute(j, sem, wg)
-	wg.Wait()
-
-	assert.Equal(t, domain.Completed, j.GetStatus())
 }
 
 func TestExecute_PanicRecovery(t *testing.T) {
@@ -102,12 +95,16 @@ func TestExecute_PanicRecovery(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{}
+	var err error
+	var j domain.Job
 
-	j := newTestJobExecute(t, "exec-panic", func(ctrl domain.FnControl) error {
+	jCfg := newTestJobExecute("exec-panic", func(ctrl domain.FnControl) error {
 		panic("unexpected panic in job")
-	}, domain.Waiting, p.Ctx, p.Mon)
-
-	p.execute(j, sem, wg)
+	})
+	err = p.AddJob(jCfg)
+	j, err = p.GetJobByID(jCfg.ID)
+	assert.NoError(t, err)
+	p.Execute(j, sem, wg)
 	wg.Wait()
 
 	assert.Equal(t, domain.Error, j.GetStatus())

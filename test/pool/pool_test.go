@@ -1,12 +1,13 @@
-package pool
+package pool_test
 
 import (
 	"context"
 	"github.com/osmike/orbit/internal/domain"
 	errs "github.com/osmike/orbit/internal/error"
 	"github.com/osmike/orbit/internal/job"
-	"github.com/osmike/orbit/monitoring"
+	"github.com/osmike/orbit/internal/pool"
 	"github.com/osmike/orbit/test"
+	"github.com/osmike/orbit/test/monitoring"
 	"github.com/stretchr/testify/assert"
 	"strconv"
 	"testing"
@@ -53,8 +54,8 @@ func TestPool_Run(t *testing.T) {
 	}
 	mon := monitoring.New()
 	var err error
-
-	p := New(context.Background(), cfg, mon)
+	p, err := pool.New(context.Background(), cfg, mon, job.New)
+	assert.NoError(t, err)
 	for i := 1; i < 1001; i++ {
 		fn := func(ctrl domain.FnControl) error {
 			for {
@@ -78,10 +79,8 @@ func TestPool_Run(t *testing.T) {
 			Interval: domain.Interval{Time: 3 * time.Second},
 			Fn:       fn,
 		}
-		var j *job.Job
-		j, err = job.New(jCfg, p.Ctx, p.Mon)
 		assert.NoError(t, err)
-		err = p.AddJob(j)
+		err = p.AddJob(jCfg)
 		assert.NoError(t, err)
 	}
 	err = p.Run()

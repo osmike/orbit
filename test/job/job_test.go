@@ -1,8 +1,9 @@
-package job
+package job_test
 
 import (
 	"context"
-	"github.com/osmike/orbit/monitoring"
+	"github.com/osmike/orbit/internal/job"
+	"github.com/osmike/orbit/test/monitoring"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 func TestJob_New_Valid(t *testing.T) {
 	ctx := context.Background()
 	mon := monitoring.New()
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "valid-job",
 		Name: "test",
 		Interval: domain.Interval{
@@ -23,17 +24,17 @@ func TestJob_New_Valid(t *testing.T) {
 		},
 		Fn: func(ctrl domain.FnControl) error { return nil },
 	}, ctx, mon)
-
 	assert.NoError(t, err)
+	meta := j.GetMetadata()
 	assert.NotNil(t, j)
-	assert.Equal(t, "valid-job", j.ID)
-	assert.Equal(t, "test", j.Name)
+	assert.Equal(t, "valid-job", meta.ID)
+	assert.Equal(t, "test", meta.Name)
 }
 
 func TestJob_New_InvalidID(t *testing.T) {
 	ctx := context.Background()
 	mon := monitoring.New()
-	_, err := New(domain.JobDTO{
+	_, err := job.New(domain.JobDTO{
 		ID: "",
 		Fn: func(ctrl domain.FnControl) error { return nil },
 	}, ctx, mon)
@@ -43,7 +44,7 @@ func TestJob_New_InvalidID(t *testing.T) {
 func TestJob_New_InvalidFn(t *testing.T) {
 	ctx := context.Background()
 	mon := monitoring.New()
-	_, err := New(domain.JobDTO{
+	_, err := job.New(domain.JobDTO{
 		ID: "no-fn",
 	}, ctx, mon)
 	assert.ErrorIs(t, err, errs.ErrEmptyFunction)
@@ -52,7 +53,7 @@ func TestJob_New_InvalidFn(t *testing.T) {
 func TestJob_New_InvalidCronAndInterval(t *testing.T) {
 	ctx := context.Background()
 	mon := monitoring.New()
-	_, err := New(domain.JobDTO{
+	_, err := job.New(domain.JobDTO{
 		ID: "mixed",
 		Interval: domain.Interval{
 			Time:     time.Second,
@@ -66,7 +67,7 @@ func TestJob_New_InvalidCronAndInterval(t *testing.T) {
 func TestJob_GetSetStatus(t *testing.T) {
 	ctx := context.Background()
 	mon := monitoring.New()
-	j, _ := New(domain.JobDTO{
+	j, _ := job.New(domain.JobDTO{
 		ID:       "status-check",
 		Fn:       func(ctrl domain.FnControl) error { return nil },
 		Interval: domain.Interval{Time: time.Second},
@@ -80,26 +81,9 @@ func TestJob_GetSetStatus(t *testing.T) {
 	assert.Equal(t, domain.Completed, j.GetStatus())
 }
 
-func TestJob_SaveUserDataToState(t *testing.T) {
-	ctx := context.Background()
-	mon := monitoring.New()
-	j, _ := New(domain.JobDTO{
-		ID:       "data-job",
-		Fn:       func(ctrl domain.FnControl) error { return nil },
-		Interval: domain.Interval{Time: time.Second},
-	}, ctx, mon)
-
-	j.ctrl.SaveData(map[string]interface{}{"foo": "bar"})
-	state := j.GetState()
-
-	val, ok := state.Data["foo"]
-	assert.True(t, ok)
-	assert.Equal(t, "bar", val)
-}
-
 func TestJob_UpdateState(t *testing.T) {
 	mon := monitoring.New()
-	job, err := New(domain.JobDTO{
+	job, err := job.New(domain.JobDTO{
 		ID:   "update-state-job",
 		Name: "update test",
 		Interval: domain.Interval{
@@ -121,7 +105,7 @@ func TestJob_UpdateState(t *testing.T) {
 
 func TestJob_SaveMetrics(t *testing.T) {
 	mon := monitoring.New()
-	job, err := New(domain.JobDTO{
+	job, err := job.New(domain.JobDTO{
 		ID:   "metrics-job",
 		Name: "metrics save",
 		Interval: domain.Interval{
@@ -149,7 +133,7 @@ func TestJob_GetStateCopy_AfterHookWrites(t *testing.T) {
 	mon := monitoring.New()
 	ctx := context.Background()
 
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:       "copy-job",
 		Interval: domain.Interval{Time: time.Second},
 		Hooks: domain.Hooks{

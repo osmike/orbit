@@ -15,14 +15,13 @@ import (
 )
 
 func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
-	scheduler := orbit.New(context.Background())
 	mon := monitoring.New()
-	//mon := orbit.newDefaultMon()
-
-	pool := scheduler.CreatePool(orbit.PoolConfig{
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
+
+	assert.NoError(t, err)
 
 	called := false
 
@@ -33,7 +32,7 @@ func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
 				called = true
 				return nil
 			},
-			orbit.Hooks: orbit.Hooks{
+			Hooks: orbit.Hooks{
 				OnStart: orbit.Hook{
 					Fn: func(ctrl orbit.FnControl, err error) error {
 						return errors.New("onStart failed")
@@ -41,17 +40,18 @@ func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
 					IgnoreError: ignore,
 				},
 			},
-			orbit.Interval: orbit.Interval{Time: 0},
+			Interval: orbit.Interval{Time: 0},
 		}
 	}
 
 	jobOK := withHook(true)
 	jobFail := withHook(false)
 
-	assert.NoError(t, scheduler.AddJob(pool, jobOK))
-	assert.NoError(t, scheduler.AddJob(pool, jobFail))
+	assert.NoError(t, pool.AddJob(jobOK))
+	assert.NoError(t, pool.AddJob(jobFail))
 
-	pool.Run()
+	err = pool.Run()
+	assert.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
 
 	assert.True(t, called, "Job with IgnoreError=true should have executed")
@@ -63,13 +63,13 @@ func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
 }
 
 func TestHookOnError_IsCalled(t *testing.T) {
-	scheduler := orbit.New(context.Background())
-	mon := orbit.newDefaultMon()
+	mon := monitoring.New()
 
-	pool := scheduler.CreatePool(orbit.PoolConfig{
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
+	assert.NoError(t, err)
 
 	var capturedErr error
 
@@ -78,7 +78,7 @@ func TestHookOnError_IsCalled(t *testing.T) {
 		Fn: func(ctrl orbit.FnControl) error {
 			return errors.New("simulated failure")
 		},
-		orbit.Hooks: orbit.Hooks{
+		Hooks: orbit.Hooks{
 			OnError: orbit.Hook{
 				Fn: func(ctrl orbit.FnControl, err error) error {
 					capturedErr = err
@@ -86,10 +86,10 @@ func TestHookOnError_IsCalled(t *testing.T) {
 				},
 			},
 		},
-		orbit.Interval: orbit.Interval{Time: 0},
+		Interval: orbit.Interval{Time: 0},
 	}
 
-	assert.NoError(t, scheduler.AddJob(pool, job))
+	assert.NoError(t, pool.AddJob(job))
 	pool.Run()
 
 	test.WaitForCondition(t, 1*time.Second, func() bool {
@@ -101,7 +101,6 @@ func TestHookOnError_IsCalled(t *testing.T) {
 }
 
 func TestHookLoggingJobFlow(t *testing.T) {
-	orb := orbit.New(context.Background())
 
 	var output bytes.Buffer
 	logger := log.New(&output, "", 0)
@@ -123,7 +122,8 @@ func TestHookLoggingJobFlow(t *testing.T) {
 		onErrorHookExecuted   bool
 		finallyHookExecuted   bool
 	)
-	p := orb.CreatePool(orbit.PoolConfig{}, orbit.newDefaultMon())
+	p, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{}, monitoring.New())
+	assert.NoError(t, err)
 	defer p.Kill()
 
 	fn := func(ctrl orbit.FnControl) error {
@@ -152,7 +152,7 @@ func TestHookLoggingJobFlow(t *testing.T) {
 	jobCfg := orbit.Job{
 		ID: jobID,
 		Fn: fn,
-		orbit.Hooks: orbit.Hooks{
+		Hooks: orbit.Hooks{
 			OnStart:   orbit.Hook{Fn: onStartHook},
 			OnStop:    orbit.Hook{Fn: onStopHook},
 			OnError:   orbit.Hook{Fn: onErrorHook},
@@ -162,7 +162,7 @@ func TestHookLoggingJobFlow(t *testing.T) {
 			Finally:   orbit.Hook{Fn: finallyHook},
 		},
 	}
-	assert.NoError(t, orb.AddJob(p, jobCfg))
+	assert.NoError(t, p.AddJob(jobCfg))
 	assert.NoError(t, p.Run())
 
 	time.Sleep(200 * time.Millisecond)

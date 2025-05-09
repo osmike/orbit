@@ -1,9 +1,10 @@
-package job
+package job_test
 
 import (
 	"context"
 	"errors"
-	"github.com/osmike/orbit/monitoring"
+	"github.com/osmike/orbit/internal/job"
+	"github.com/osmike/orbit/test/monitoring"
 	"testing"
 	"time"
 
@@ -13,12 +14,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func newExecutableJob(t *testing.T, hooks domain.Hooks, fn domain.Fn) *Job {
+func newExecutableJob(t *testing.T, hooks domain.Hooks, fn domain.Fn) domain.Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	mon := monitoring.New()
 
-	job, err := New(domain.JobDTO{
+	job, err := job.New(domain.JobDTO{
 		ID:   "exec-job",
 		Name: "execution test",
 		Interval: domain.Interval{
@@ -136,7 +137,7 @@ func TestJob_Execute_FinallyFails(t *testing.T) {
 func TestJob_Execute_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 	mon := monitoring.New()
-	job, err := New(domain.JobDTO{
+	job, err := job.New(domain.JobDTO{
 		ID:   "already-running",
 		Name: "test job",
 		Interval: domain.Interval{
@@ -165,7 +166,7 @@ func TestJob_Execute_WithPauseAndResume(t *testing.T) {
 
 	resumed := make(chan struct{}, 1)
 	mon := monitoring.New()
-	job, err := New(domain.JobDTO{
+	job, err := job.New(domain.JobDTO{
 		ID:       "job-pause-resume",
 		Name:     "pause/resume job",
 		Interval: domain.Interval{Time: time.Second},
@@ -206,7 +207,7 @@ func TestJob_Execute_StoppedDuringFn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	mon := monitoring.New()
-	job, err := New(domain.JobDTO{
+	job, err := job.New(domain.JobDTO{
 		ID:       "job-stop-test",
 		Name:     "job to stop",
 		Interval: domain.Interval{Time: time.Second},

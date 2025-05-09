@@ -1,19 +1,19 @@
-package job
+package job_test
 
 import (
 	"context"
+	"github.com/osmike/orbit/internal/job"
+	"github.com/osmike/orbit/test/monitoring"
 	"testing"
 	"time"
 
 	"github.com/osmike/orbit/internal/domain"
-	"github.com/osmike/orbit/monitoring"
-
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestJobForProcess(t *testing.T) *Job {
+func newTestJobForProcess(t *testing.T) domain.Job {
 	mon := monitoring.New()
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:       "test-job-process",
 		Name:     "process test",
 		Interval: domain.Interval{Time: time.Second},
@@ -38,17 +38,6 @@ func TestJob_ProcessStart(t *testing.T) {
 	assert.True(t, state.EndAt.IsZero())
 	assert.Zero(t, state.ExecutionTime)
 	assert.Empty(t, state.Data)
-}
-
-func TestJob_ProcessRun_NoTimeout(t *testing.T) {
-	j := newTestJobForProcess(t)
-
-	j.ProcessStart()
-	time.Sleep(50 * time.Millisecond)
-	err := j.ProcessRun()
-
-	assert.NoError(t, err)
-	assert.Less(t, j.GetState().ExecutionTime, int64(j.Timeout))
 }
 
 func TestJob_ProcessRun_Timeout(t *testing.T) {

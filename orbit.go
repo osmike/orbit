@@ -18,8 +18,6 @@
 //
 // Example usage:
 //
-//	s := orbit.New(context.Background())
-//
 //	poolCfg := orbit.PoolConfig{
 //		ID:           "analytics-pool",
 //		MaxWorkers:   10,
@@ -38,7 +36,7 @@
 //		Interval: orbit.IntervalConfig{Time: 5 * time.Second},
 //	}
 //
-//	s.AddJob(pool, jobCfg)
+//	_ := s.AddJob(jobCfg)
 //
 //  pool.Run()
 //  defer pool.Kill()
@@ -48,11 +46,10 @@ package orbit
 
 import (
 	"context"
-	"fmt"
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
-	"orbit/internal/job"
-	"orbit/internal/pool"
+	"github.com/osmike/orbit/internal/domain"
+	"github.com/osmike/orbit/internal/job"
+	"github.com/osmike/orbit/internal/pool"
+	"time"
 )
 
 // PoolConfig encapsulates the configuration settings required to initialize a new scheduler pool.
@@ -70,7 +67,16 @@ type PoolConfig = domain.Pool
 //
 // Provides methods for managing job execution lifecycle, concurrency,
 // job state control, and interaction with monitoring.
-type Pool = pool.Pool
+type Pool interface {
+	AddJob(cfg Job) error
+	Run() error
+	Kill()
+	StopJob(jobID string) error
+	PauseJob(jobID string, timeout time.Duration) error
+	ResumeJob(jobID string) error
+	RemoveJob(jobID string) error
+	GetMetrics() map[string]interface{}
+}
 
 // Job defines a job's configuration and execution details.
 //
@@ -183,34 +189,6 @@ type Monitoring interface {
 	GetMetrics() map[string]interface{}
 }
 
-// Orbit orchestrates the creation and management of job execution pools and scheduled jobs.
-//
-// Provides a simplified API for pool creation, job addition, and lifecycle management.
-//
-// Methods:
-//   - CreatePool: Initializes a new job execution pool with specified settings.
-//   - AddJob: Creates and adds a job to a specified pool.
-//
-// Usage:
-//
-//	scheduler := orbit.New(context.Background())
-//	pool := scheduler.CreatePool(config, nil)
-//	scheduler.AddJob(pool, jobConfig)
-type Orbit struct {
-	ctx context.Context // Parent context to manage scheduler lifecycle.
-}
-
-// New initializes a new Scheduler instance.
-//
-// Parameters:
-//   - ctx: Parent execution context used for managing graceful shutdown and global cancellation.
-//
-// Returns:
-//   - Pointer to a new Scheduler instance.
-func New(ctx context.Context) *Orbit {
-	return &Orbit{ctx}
-}
-
 // CreatePool creates and configures a new job execution pool.
 //
 // Parameters:
@@ -220,29 +198,10 @@ func New(ctx context.Context) *Orbit {
 //
 // Returns:
 //   - Initialized and ready-to-use Pool instance.
-func (s *Orbit) CreatePool(cfg PoolConfig, mon Monitoring) *Pool {
+func CreatePool(ctx context.Context, cfg PoolConfig, mon Monitoring) (Pool, error) {
 	if mon == nil {
 		mon = newDefaultMon()
 	}
 
-	return pool.New(s.ctx, cfg, mon)
-}
-
-// AddJob creates and registers a new job in the specified scheduler pool.
-//
-// Validates the job's configuration and state before adding it to the pool.
-//
-// Parameters:
-//   - pool: Target scheduler Pool to which the job will be added.
-//   - cfg: JobConfig detailing the execution function, scheduling parameters, retries, and hooks.
-//
-// Returns:
-//   - nil on successful addition.
-//   - Error describing the failure reason otherwise.
-func (s *Orbit) AddJob(pool *Pool, cfg Job) error {
-	j, err := job.New(cfg, pool.Ctx, pool.Mon)
-	if err != nil {
-		return errs.New(errs.ErrAddingJob, fmt.Sprintf("err - %v", err))
-	}
-	return pool.AddJob(j)
+	return pool.New(ctx, cfg, mon, job.New)
 }

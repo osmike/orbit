@@ -1,9 +1,10 @@
-package job
+package job_test
 
 import (
 	"errors"
 	"github.com/osmike/orbit/internal/domain"
-	"github.com/osmike/orbit/monitoring"
+	"github.com/osmike/orbit/internal/job"
+	"github.com/osmike/orbit/test/monitoring"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 func TestState_Init(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-123", mon)
+	s := job.NewState("job-123", mon)
 	assert.Equal(t, "job-123", s.JobID)
 	assert.Equal(t, domain.Waiting, s.Status)
 	assert.NotNil(t, s.Data)
@@ -20,14 +21,14 @@ func TestState_Init(t *testing.T) {
 
 func TestState_SetAndGetStatus(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-1", mon)
+	s := job.NewState("job-1", mon)
 	s.SetStatus(domain.Running)
 	assert.Equal(t, domain.Running, s.GetStatus())
 }
 
 func TestState_TrySetStatus(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-1", mon)
+	s := job.NewState("job-1", mon)
 
 	s.SetStatus(domain.Waiting)
 	ok := s.TrySetStatus([]domain.JobStatus{domain.Waiting}, domain.Running)
@@ -41,7 +42,7 @@ func TestState_TrySetStatus(t *testing.T) {
 
 func TestState_UpdateExecutionTime(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-1", mon)
+	s := job.NewState("job-1", mon)
 	s.StartAt = time.Now()
 
 	time.Sleep(5 * time.Millisecond)
@@ -53,10 +54,10 @@ func TestState_UpdateExecutionTime(t *testing.T) {
 
 func TestState_Update(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-1", mon)
+	s := job.NewState("job-1", mon)
 
 	now := time.Now()
-	newState := domain.StateDTO{
+	NewState := domain.StateDTO{
 		StartAt:       now,
 		EndAt:         now.Add(1 * time.Second),
 		Status:        domain.Completed,
@@ -67,7 +68,7 @@ func TestState_Update(t *testing.T) {
 		},
 	}
 
-	s.Update(newState, false)
+	s.Update(NewState, false)
 	stored := s.GetState()
 	assert.Equal(t, domain.Completed, stored.Status)
 	assert.Equal(t, "fail", stored.Error.JobError.Error())
@@ -77,7 +78,7 @@ func TestState_Update(t *testing.T) {
 
 func TestState_GetState(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-1", mon)
+	s := job.NewState("job-1", mon)
 	s.SetStatus(domain.Running)
 	st := s.GetState()
 	assert.Equal(t, domain.Running, st.Status)
@@ -86,7 +87,7 @@ func TestState_GetState(t *testing.T) {
 
 func TestState_SetEndState_Valid(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-1", mon)
+	s := job.NewState("job-1", mon)
 	s.SetStatus(domain.Running)
 	s.StartAt = time.Now()
 
@@ -104,7 +105,7 @@ func TestState_SetEndState_Valid(t *testing.T) {
 
 func TestState_SetEndState_InvalidTransition(t *testing.T) {
 	mon := monitoring.New()
-	s := newState("job-1", mon)
+	s := job.NewState("job-1", mon)
 	s.SetStatus(domain.Completed)
 	s.StartAt = time.Now()
 
@@ -124,17 +125,4 @@ func TestState_SetEndState_InvalidTransition(t *testing.T) {
 	s.SetEndState(true, domain.Completed, nil)
 	state = s.GetState()
 	assert.Equal(t, domain.Stopped, state.Status)
-}
-
-func TestState_SetEndState_ResetsRetry(t *testing.T) {
-	mon := monitoring.New()
-	s := newState("job-1", mon)
-	s.SetStatus(domain.Running)
-	s.StartAt = time.Now()
-
-	s.Error.JobError = errors.New("fail")
-	s.currentRetry = 3
-	s.SetEndState(true, domain.Completed, nil)
-
-	assert.Equal(t, int(0), s.currentRetry)
 }

@@ -42,47 +42,46 @@ Here's how easy it is to get started:
 package main
 
 import (
-    "context"
-    "fmt"
-    "github.com/osmike/orbit"
-    "time"
+  "context"
+  "fmt"
+  "github.com/osmike/orbit"
+  "time"
 )
 
 func main() {
-    ctx := context.Background()
-    orb := orbit.New(ctx)
+  ctx := context.Background()
 
-    pool, _ := orb.CreatePool(ctx, orbit.PoolConfig{
-		// MaxWorkers sets the maximum number of concurrent workers allowed to execute jobs simultaneously.
-		// Higher values can improve throughput for CPU-bound or I/O-bound tasks, but might consume more system resources.
-		// Default value:
-		MaxWorkers: 1000,
-		// IdleTimeout specifies the duration after which a job that remains idle
-		// (not executed or scheduled for immediate execution) will be marked as inactive.
-		// This helps optimize resource usage and prevents accumulation of stale tasks.
-		// Default value:
-		IdleTimeout: 100 * time.Hour,
-		// CheckInterval defines how frequently the pool checks for jobs that are ready for execution or require status updates.
-		// Short intervals result in more responsive job execution at the expense of slightly increased CPU utilization.
-		CheckInterval: 100 * time.Millisecond,
-    }, nil)
+  pool, _ := orbit.CreatePool(ctx, orbit.PoolConfig{
+    // MaxWorkers sets the maximum number of concurrent workers allowed to execute jobs simultaneously.
+    // Higher values can improve throughput for CPU-bound or I/O-bound tasks, but might consume more system resources.
+    // Default value:
+    MaxWorkers: 1000,
+    // IdleTimeout specifies the duration after which a job that remains idle
+    // (not executed or scheduled for immediate execution) will be marked as inactive.
+    // This helps optimize resource usage and prevents accumulation of stale tasks.
+    // Default value:
+    IdleTimeout: 100 * time.Hour,
+    // CheckInterval defines how frequently the pool checks for jobs that are ready for execution or require status updates.
+    // Short intervals result in more responsive job execution at the expense of slightly increased CPU utilization.
+    CheckInterval: 100 * time.Millisecond,
+  }, nil)
 
-    jobCfg := orbit.JobConfig{
-        ID:   "hello-world",
-        Name: "Print Hello World",
-        Fn: func(ctrl orbit.FnControl) error {
-            fmt.Println("Hello, World!")
-            return nil
-        },
-        Interval: orbit.IntervalConfig{Time: 5 * time.Second},
-    }
+  jobCfg := orbit.JobConfig{
+    ID:   "hello-world",
+    Name: "Print Hello World",
+    Fn: func(ctrl orbit.FnControl) error {
+      fmt.Println("Hello, World!")
+      return nil
+    },
+    Interval: orbit.IntervalConfig{Time: 5 * time.Second},
+  }
 
-    orb.AddJob(pool, jobCfg)
-	// Run starts the main controlling goroutine for the pool.
-	// It continuously manages job scheduling, execution, and lifecycle events.
-    pool.Run()
+  pool.AddJob(jobCfg)
+  // Run starts the main controlling goroutine for the pool.
+  // It continuously manages job scheduling, execution, and lifecycle events.
+  pool.Run()
 
-    select {} // Keep running indefinitely
+  select {} // Keep running indefinitely
 }
 ```
 
@@ -227,9 +226,8 @@ You can control how many jobs run in parallel using the `MaxWorkers` option in y
 Let's say you want only **one job at a time** to run. You add 3 jobs with the same interval, but with slight delays in when they're registered:
 
 ```go
-orb := orbit.New(context.Background())
 
-pool, _ := orb.CreatePool(context.Background(), orbit.PoolConfig{
+pool, _ := orbit.CreatePool(context.Background(), context.Background(), orbit.PoolConfig{
     MaxWorkers:    1,                       // allow only 1 job at a time
     CheckInterval: 50 * time.Millisecond,  // quick job scanning
 }, nil)
@@ -248,11 +246,11 @@ createJob := func(id string, delay time.Duration) orbit.JobConfig {
     }
 }
 
-orb.AddJob(pool, createJob("job1", 0))
+pool.AddJob(createJob("job1", 0))
 time.Sleep(100 * time.Millisecond)
-orb.AddJob(pool, createJob("job2", 100*time.Millisecond))
+pool.AddJob(createJob("job2", 100*time.Millisecond))
 time.Sleep(100 * time.Millisecond)
-orb.AddJob(pool, createJob("job3", 200*time.Millisecond))
+pool.AddJob(createJob("job3", 200*time.Millisecond))
 
 pool.Run()
 select {}
@@ -399,9 +397,8 @@ import (
 )
 
 func main() {
-    orb := orbit.New(context.Background())
 
-    pool, _ := orb.CreatePool(context.Background(), orbit.PoolConfig{
+    pool, _ := orbit.CreatePool(context.Background(), orbit.PoolConfig{
         MaxWorkers:    3,
         CheckInterval: 10 * time.Millisecond,
     }, nil)
@@ -444,7 +441,7 @@ func main() {
 
     // Add jobs to the pool
     for _, job := range jobs {
-        _ = orb.AddJob(pool, job)
+        _ = pool.AddJob(job)
     }
 
     // Let them run for a while
@@ -507,9 +504,8 @@ import (
 )
 
 func main() {
-    orb := orbit.New(context.Background())
 
-    pool, _ := orb.CreatePool(orbit.PoolConfig{
+    pool, _ := orbit.CreatePool(context.Background(), orbit.PoolConfig{
         MaxWorkers:    1,
         CheckInterval: 50 * time.Millisecond,
     }, nil)
@@ -525,7 +521,7 @@ func main() {
         Interval: orbit.IntervalConfig{Time: 1 * time.Hour}, // Never intended to complete
     }
 
-    _ = orb.AddJob(pool, longJob)
+    _ = pool.AddJob(longJob)
 
     pool.Run()
 
@@ -919,9 +915,7 @@ Main orchestrator for pool and job lifecycle.
 
 | Method                                             | 	Description                                                              |
 |----------------------------------------------------|---------------------------------------------------------------------------|
-| `New(ctx context.Context)`	                        | Creates a new `Orbit` instance. Used to initialize jobs and pools.        |
-| `CreatePool(cfg PoolConfig, mon Monitoring) *Pool` | 	Initializes a pool with the given configuration and monitoring strategy. |
-| `AddJob(pool *Pool, cfg JobConfig) error`          | 	Creates and registers a new job inside the given pool.                   |
+| `CreatePool(ctx context.Context, cfg PoolConfig, mon Monitoring) *Pool` | 	Initializes a pool with the given configuration and monitoring strategy. |
 
 ___
 ## ⚖️ License

@@ -1,49 +1,46 @@
-package pool
+package pool_test
 
 import (
 	"context"
+	"github.com/osmike/orbit/internal/pool"
+	"github.com/osmike/orbit/test/monitoring"
 	"testing"
 	"time"
 
 	"github.com/osmike/orbit/internal/domain"
 	errs "github.com/osmike/orbit/internal/error"
 	"github.com/osmike/orbit/internal/job"
-	"github.com/osmike/orbit/monitoring"
-
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestPoolCommands(t *testing.T) *Pool {
+func newTestPoolCommands(t *testing.T) *pool.Pool {
 	ctx := context.Background()
 	cfg := domain.Pool{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 		IdleTimeout:   5 * time.Second,
 	}
-	p := New(ctx, cfg, monitoring.New())
+	p, _ := pool.New(ctx, cfg, monitoring.New(), job.New)
 	assert.Equal(t, p.MaxWorkers, cfg.MaxWorkers)
 	assert.Equal(t, p.CheckInterval, cfg.CheckInterval)
 	assert.Equal(t, p.IdleTimeout, cfg.IdleTimeout)
 	return p
 }
 
-func newTestJobCommands(t *testing.T, jobID string, status domain.JobStatus, fn domain.Fn, ctx context.Context, mon domain.Monitoring) *job.Job {
+func newTestJobCommands(jobID string, fn domain.Fn) domain.JobDTO {
 
-	j, err := job.New(domain.JobDTO{
+	return domain.JobDTO{
 		ID:       jobID,
 		Name:     jobID,
 		Fn:       fn,
 		Interval: domain.Interval{Time: time.Second},
-	}, ctx, mon)
-	assert.NoError(t, err)
-	j.SetStatus(status)
-	return j
+	}
 }
 
 func TestPoolCommands_AddJob_Success(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-	j := newTestJobCommands(t, "job-1", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
+	j := newTestJobCommands("job-1", func(ctrl domain.FnControl) error { return nil })
 
 	err := p.AddJob(j)
 	assert.NoError(t, err)
@@ -52,30 +49,24 @@ func TestPoolCommands_AddJob_Success(t *testing.T) {
 func TestPoolCommands_AddJob_Duplicate(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-	j := newTestJobCommands(t, "job-dup", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
+	j := newTestJobCommands("job-dup", func(ctrl domain.FnControl) error { return nil })
 
 	assert.NoError(t, p.AddJob(j))
 	err := p.AddJob(j)
 	assert.ErrorIs(t, err, errs.ErrIDExists)
 }
 
-func TestPoolCommands_AddJob_InvalidStatus(t *testing.T) {
-	p := newTestPoolCommands(t)
-	defer p.Kill()
-	j := newTestJobCommands(t, "job-invalid", domain.Running, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
-
-	err := p.AddJob(j)
-	assert.ErrorIs(t, err, errs.ErrJobWrongStatus)
-}
-
 func TestPoolCommands_RemoveJob_Success(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-	j := newTestJobCommands(t, "job-remove", domain.Waiting, func(ctrl domain.FnControl) error { return nil }, p.Ctx, p.Mon)
+	jID := "job-remove"
+	j := newTestJobCommands(jID, func(ctrl domain.FnControl) error { return nil })
 
 	assert.NoError(t, p.AddJob(j))
-	err := p.RemoveJob("job-remove")
+	err := p.RemoveJob(jID)
 	assert.NoError(t, err)
+	_, err = p.GetJobByID(jID)
+	assert.ErrorIs(t, err, errs.ErrJobNotFound)
 }
 
 func TestPoolCommands_RemoveJob_NotFound(t *testing.T) {
@@ -97,7 +88,8 @@ func TestPoolCommands_WorkFlowJob_Success(t *testing.T) {
 	resumed := make(chan struct{}, 1)
 	var err error
 	jID := "job-work-flow"
-	j := newTestJobCommands(t, jID, domain.Waiting, func(ctrl domain.FnControl) error {
+	var j domain.Job
+	jCfg := newTestJobCommands(jID, func(ctrl domain.FnControl) error {
 		for {
 			select {
 			case <-ctrl.PauseChan():
@@ -109,10 +101,13 @@ func TestPoolCommands_WorkFlowJob_Success(t *testing.T) {
 				time.Sleep(200 * time.Millisecond)
 			}
 		}
-	}, p.Ctx, p.Mon)
+	})
 
-	assert.NoError(t, p.AddJob(j))
-	go p.Run()
+	assert.NoError(t, p.AddJob(jCfg))
+	err = p.Run()
+	assert.NoError(t, err)
+	j, err = p.GetJobByID(jID)
+	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, domain.Running, j.GetStatus())
 
@@ -147,15 +142,22 @@ func TestPoolCommands_ResumeJob_NotFound(t *testing.T) {
 func TestPoolCommands_StopJob_Success(t *testing.T) {
 	p := newTestPoolCommands(t)
 	defer p.Kill()
-
-	j := newTestJobCommands(t, "job-stop", domain.Waiting, func(ctrl domain.FnControl) error {
+	var err error
+	var j domain.Job
+	jID := "job-stop"
+	jCfg := newTestJobCommands(jID, func(ctrl domain.FnControl) error {
 		<-ctrl.Context().Done()
 		return ctrl.Context().Err()
-	}, p.Ctx, p.Mon)
-	assert.NoError(t, p.AddJob(j))
-	go p.Run()
-	err := p.StopJob("job-stop")
+	})
+	assert.NoError(t, p.AddJob(jCfg))
+	err = p.Run()
 	assert.NoError(t, err)
+	err = p.StopJob(jID)
+	assert.NoError(t, err)
+	j, err = p.GetJobByID(jID)
+	assert.NoError(t, err)
+	status := j.GetStatus()
+	assert.Equal(t, domain.Stopped, status)
 }
 
 func TestPoolCommands_StopJob_NotFound(t *testing.T) {
@@ -163,10 +165,4 @@ func TestPoolCommands_StopJob_NotFound(t *testing.T) {
 	defer p.Kill()
 	err := p.StopJob("not-exist")
 	assert.ErrorIs(t, err, errs.ErrJobNotFound)
-}
-
-func TestPoolCommands_StopPool(t *testing.T) {
-	p := newTestPoolCommands(t)
-	p.Kill()
-	assert.NotNil(t, p.Ctx.Err())
 }

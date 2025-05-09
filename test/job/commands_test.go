@@ -1,23 +1,24 @@
-package job
+package job_test
 
 import (
 	"context"
-	"orbit/monitoring"
+	"github.com/osmike/orbit/internal/job"
+	"github.com/osmike/orbit/test/monitoring"
 	"testing"
 	"time"
 
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
+	"github.com/osmike/orbit/internal/domain"
+	errs "github.com/osmike/orbit/internal/error"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func newRunningJobWithoutPauseHandler(t *testing.T) *Job {
+func newRunningJobWithoutPauseHandler(t *testing.T) domain.Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	mon := monitoring.New()
 
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "test-pause-no-handler",
 		Name: "job without pause handler",
 		Interval: domain.Interval{
@@ -35,12 +36,12 @@ func newRunningJobWithoutPauseHandler(t *testing.T) *Job {
 	return j
 }
 
-func newRunningJobWithPauseHandler(t *testing.T) *Job {
+func newRunningJobWithPauseHandler(t *testing.T) domain.Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	mon := monitoring.New()
 
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "test-pause",
 		Name: "pause handler job",
 		Interval: domain.Interval{
@@ -63,9 +64,9 @@ func newRunningJobWithPauseHandler(t *testing.T) *Job {
 func TestJob_Pause_Success(t *testing.T) {
 	j := newRunningJobWithPauseHandler(t)
 
-	go func() {
-		<-j.ctrl.PauseChan()
-	}()
+	//go func() {
+	//	<-j.ctrl.PauseChan()
+	//}()
 
 	err := j.Pause(300 * time.Millisecond)
 	assert.NoError(t, err)
@@ -98,7 +99,7 @@ func TestJob_Resume_FromPaused(t *testing.T) {
 	resumed := make(chan struct{})
 	mon := monitoring.New()
 
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "resume-paused",
 		Name: "job that handles pause/resume",
 		Interval: domain.Interval{
@@ -122,9 +123,7 @@ func TestJob_Resume_FromPaused(t *testing.T) {
 	j.SetStatus(domain.Running)
 	err = j.Pause(300 * time.Millisecond)
 
-	go func() {
-		_ = j.Fn(j.ctrl)
-	}()
+	go j.Execute()
 
 	time.Sleep(100 * time.Millisecond)
 	err = j.Resume(ctx)
@@ -145,7 +144,7 @@ func TestJob_EndedContext_FromResumed(t *testing.T) {
 	resumed := make(chan struct{})
 	mon := monitoring.New()
 
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "context-ended-in-resume",
 		Name: "job that handles handle context end while paused",
 		Interval: domain.Interval{
@@ -169,9 +168,7 @@ func TestJob_EndedContext_FromResumed(t *testing.T) {
 	j.SetStatus(domain.Running)
 	err = j.Pause(300 * time.Millisecond)
 
-	go func() {
-		_ = j.Fn(j.ctrl)
-	}()
+	go j.Execute()
 
 	time.Sleep(100 * time.Millisecond)
 	j.Stop()
@@ -188,7 +185,7 @@ func TestJob_EndedContext_FromResumed(t *testing.T) {
 func TestJob_Resume_FromStopped(t *testing.T) {
 	mon := monitoring.New()
 	ctx := context.Background()
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "resume-stopped",
 		Name: "resume stopped job",
 		Interval: domain.Interval{
@@ -207,7 +204,7 @@ func TestJob_Resume_FromStopped(t *testing.T) {
 func TestJob_Resume_FromInvalidState(t *testing.T) {
 	mon := monitoring.New()
 	ctx := context.Background()
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "resume-invalid",
 		Name: "resume invalid state job",
 		Interval: domain.Interval{
@@ -225,7 +222,7 @@ func TestJob_Resume_FromInvalidState(t *testing.T) {
 func TestJob_Stop_Transitions(t *testing.T) {
 	mon := monitoring.New()
 	ctx := context.Background()
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "stop-running",
 		Name: "stop transition job",
 		Interval: domain.Interval{
@@ -248,7 +245,7 @@ func TestJob_Stop_WithHook(t *testing.T) {
 	ctx := context.Background()
 	mon := monitoring.New()
 
-	j, err := New(domain.JobDTO{
+	j, err := job.New(domain.JobDTO{
 		ID:   "stop-hook",
 		Name: "job with stop hook",
 		Interval: domain.Interval{

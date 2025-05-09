@@ -2,12 +2,12 @@ package pool
 
 import (
 	"errors"
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
+	"github.com/osmike/orbit/internal/domain"
+	errs "github.com/osmike/orbit/internal/error"
 	"sync"
 )
 
-// execute schedules and runs a job inside a separate goroutine, assuming a semaphore slot is already acquired.
+// Execute schedules and runs a job inside a separate goroutine, assuming a semaphore slot is already acquired.
 //
 // Execution flow:
 //  1. Validates job readiness via CanExecute():
@@ -25,7 +25,7 @@ import (
 //   - job: Job to execute.
 //   - sem: Semaphore channel that controls maximum concurrency.
 //   - wg: WaitGroup to synchronize the completion of active jobs.
-func (p *Pool) execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
+func (p *Pool) Execute(job domain.Job, sem chan struct{}, wg *sync.WaitGroup) {
 
 	var (
 		err    error
@@ -34,6 +34,7 @@ func (p *Pool) execute(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 
 	// Validate job eligibility for execution.
 	execErr := job.CanExecute()
+
 	if errors.Is(execErr, errs.ErrJobExecTooEarly) {
 		return
 	}

@@ -1,11 +1,13 @@
-package orbit
+package orbit_test
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	errs "orbit/internal/error"
-	"orbit/test"
+	"github.com/osmike/orbit"
+	errs "github.com/osmike/orbit/internal/error"
+	"github.com/osmike/orbit/test"
+	"github.com/osmike/orbit/test/monitoring"
 	"strconv"
 	"sync"
 	"testing"
@@ -14,16 +16,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestJob(id string, interval time.Duration, fn func(ctrl FnControl) error) Job {
-	return Job{
+func newTestJob(id string, interval time.Duration, fn func(ctrl orbit.FnControl) error) orbit.Job {
+	return orbit.Job{
 		ID:       id,
-		Interval: Interval{Time: interval},
+		Interval: orbit.Interval{Time: interval},
 		Fn:       fn,
 	}
 }
 
 func TestSchedulerAPI(t *testing.T) {
-	scheduler := New(context.Background())
 	var err error
 	for i := 0; i < 3; i++ {
 		err := err
@@ -32,14 +33,14 @@ func TestSchedulerAPI(t *testing.T) {
 		blockChan := make(chan struct{})
 		jobCalled := false
 
-		jobFn := func(ctrl FnControl) error {
+		jobFn := func(ctrl orbit.FnControl) error {
 			jobCalled = true
 			ctrl.SaveData(map[string]interface{}{"result": i})
 			<-blockChan
 			return nil
 		}
 
-		p := scheduler.CreatePool(PoolConfig{
+		p, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 			MaxWorkers:    1,
 			CheckInterval: 10 * time.Millisecond,
 		}, nil)
@@ -51,7 +52,7 @@ func TestSchedulerAPI(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Add job
-		err = scheduler.AddJob(p, newTestJob(jobID, 50*time.Millisecond, jobFn))
+		err = p.AddJob(newTestJob(jobID, 50*time.Millisecond, jobFn))
 		assert.NoError(t, err)
 
 		time.Sleep(100 * time.Millisecond)
@@ -65,7 +66,7 @@ func TestSchedulerAPI(t *testing.T) {
 		err = p.RemoveJob(jobID)
 		assert.NoError(t, err)
 
-		err = scheduler.AddJob(p, newTestJob(jobID, 50*time.Millisecond, func(ctrl FnControl) error {
+		err = p.AddJob(newTestJob(jobID, 50*time.Millisecond, func(ctrl orbit.FnControl) error {
 			time.Sleep(100 * time.Millisecond)
 			return nil
 		}))
@@ -86,7 +87,6 @@ func TestSchedulerAPI(t *testing.T) {
 }
 
 func TestJobWithPauseResumeAndState(t *testing.T) {
-	scheduler := New(context.Background())
 
 	db := struct {
 		rowCnt     int
@@ -99,7 +99,7 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 		batchSize: 1000,
 	}
 
-	onStart := func(ctrl FnControl, err error) error {
+	onStart := func(ctrl orbit.FnControl, err error) error {
 		ctrl.SaveData(map[string]interface{}{
 			"rowCnt":   db.rowCnt,
 			"uploaded": 0,
@@ -107,7 +107,7 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 		return nil
 	}
 
-	mainFn := func(ctrl FnControl) error {
+	mainFn := func(ctrl orbit.FnControl) error {
 		for {
 			select {
 			case <-ctrl.PauseChan():
@@ -136,26 +136,26 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 		}
 	}
 
-	mon := newDefaultMon()
-	pool := scheduler.CreatePool(PoolConfig{
+	mon := monitoring.New()
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
-
+	assert.NoError(t, err)
 	jobID := "stateful-job"
-	job := Job{
+	job := orbit.Job{
 		ID: jobID,
 		Fn: mainFn,
-		Hooks: Hooks{
-			OnStart: Hook{
+		Hooks: orbit.Hooks{
+			OnStart: orbit.Hook{
 				Fn:          onStart,
 				IgnoreError: true,
 			},
 		},
-		Interval: Interval{Time: 0},
+		Interval: orbit.Interval{Time: 0},
 	}
 
-	err := scheduler.AddJob(pool, job)
+	err = pool.AddJob(job)
 	assert.NoError(t, err)
 
 	pool.Run()
@@ -167,7 +167,7 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 			t.Log("no metrics yet")
 			return false
 		}
-		state, ok := stateRaw.(JobState)
+		state, ok := stateRaw.(orbit.JobState)
 		if !ok {
 			t.Log("bad cast to JobState")
 			return false
@@ -194,7 +194,7 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 	stateRaw, ok := metrics[jobID]
 	assert.True(t, ok, "Expected metrics for job: %s", jobID)
 
-	state, ok := stateRaw.(JobState)
+	state, ok := stateRaw.(orbit.JobState)
 	assert.True(t, ok, "Expected JobState in metrics")
 
 	assert.Equal(t, 9000, test.ToInt(state.Data["uploaded"]))
@@ -209,18 +209,17 @@ func TestJobWithPauseResumeAndState(t *testing.T) {
 }
 
 func TestJobStop(t *testing.T) {
-	scheduler := New(context.Background())
-	pool := scheduler.CreatePool(PoolConfig{
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
-	}, newDefaultMon())
-
+	}, monitoring.New())
+	assert.NoError(t, err)
 	stopped := false
 
 	jobID := "stop-job"
-	job := Job{
+	job := orbit.Job{
 		ID: jobID,
-		Fn: func(ctrl FnControl) error {
+		Fn: func(ctrl orbit.FnControl) error {
 			for {
 				select {
 				case <-ctrl.Context().Done():
@@ -231,10 +230,10 @@ func TestJobStop(t *testing.T) {
 				}
 			}
 		},
-		Interval: Interval{Time: 0},
+		Interval: orbit.Interval{Time: 0},
 	}
 
-	assert.NoError(t, scheduler.AddJob(pool, job))
+	assert.NoError(t, pool.AddJob(job))
 	pool.Run()
 
 	time.Sleep(50 * time.Millisecond)
@@ -246,18 +245,19 @@ func TestJobStop(t *testing.T) {
 }
 
 func TestJobKill(t *testing.T) {
-	scheduler := New(context.Background())
-	pool := scheduler.CreatePool(PoolConfig{
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
-	}, newDefaultMon())
+	}, monitoring.New())
+
+	assert.NoError(t, err)
 
 	jobID := "kill-job"
 	block := make(chan struct{})
 
-	job := Job{
+	job := orbit.Job{
 		ID: jobID,
-		Fn: func(ctrl FnControl) error {
+		Fn: func(ctrl orbit.FnControl) error {
 			select {
 			case <-ctrl.Context().Done():
 				return ctrl.Context().Err()
@@ -266,10 +266,10 @@ func TestJobKill(t *testing.T) {
 				return nil
 			}
 		},
-		Interval: Interval{Time: 0},
+		Interval: orbit.Interval{Time: 0},
 	}
 
-	assert.NoError(t, scheduler.AddJob(pool, job))
+	assert.NoError(t, pool.AddJob(job))
 	pool.Run()
 
 	time.Sleep(50 * time.Millisecond)
@@ -279,51 +279,49 @@ func TestJobKill(t *testing.T) {
 }
 
 func TestJobPanic_RecoveryAndStatus(t *testing.T) {
-	scheduler := New(context.Background())
-	mon := newDefaultMon()
+	mon := monitoring.New()
 
-	pool := scheduler.CreatePool(PoolConfig{
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
-
-	job := Job{
+	assert.NoError(t, err)
+	job := orbit.Job{
 		ID: "panic-job",
-		Fn: func(ctrl FnControl) error {
+		Fn: func(ctrl orbit.FnControl) error {
 			panic("unexpected crash!")
 		},
-		Interval: Interval{Time: 0},
+		Interval: orbit.Interval{Time: 0},
 	}
 
-	assert.NoError(t, scheduler.AddJob(pool, job))
+	assert.NoError(t, pool.AddJob(job))
 	pool.Run()
 
 	time.Sleep(100 * time.Millisecond)
 
 	metrics := mon.GetMetrics()
-	state := metrics[job.ID].(JobState)
+	state := metrics[job.ID].(orbit.JobState)
 
-	assert.Equal(t, JobStatus("error"), state.Status)
+	assert.Equal(t, orbit.JobStatus("error"), state.Status)
 	assert.Contains(t, state.Error.JobError.Error(), "panic: unexpected crash!")
 }
 
 func TestSequentialJobExecutionWithLimitedConcurrency(t *testing.T) {
-	scheduler := New(context.Background())
 
 	executed := []string{}
 	var mu sync.Mutex
 
-	pool := scheduler.CreatePool(PoolConfig{
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
-	}, newDefaultMon())
-
-	createJob := func(id string) Job {
-		return Job{
+	}, monitoring.New())
+	assert.NoError(t, err)
+	createJob := func(id string) orbit.Job {
+		return orbit.Job{
 			ID:       id,
 			Name:     fmt.Sprintf("Job %s", id),
-			Interval: Interval{Time: time.Second},
-			Fn: func(ctrl FnControl) error {
+			Interval: orbit.Interval{Time: time.Second},
+			Fn: func(ctrl orbit.FnControl) error {
 				mu.Lock()
 				executed = append(executed, id)
 				mu.Unlock()
@@ -338,11 +336,11 @@ func TestSequentialJobExecutionWithLimitedConcurrency(t *testing.T) {
 
 	pool.Run()
 
-	assert.NoError(t, scheduler.AddJob(pool, createJob("job1")))
+	assert.NoError(t, pool.AddJob(createJob("job1")))
 	time.Sleep(50 * time.Millisecond)
-	assert.NoError(t, scheduler.AddJob(pool, createJob("job2")))
+	assert.NoError(t, pool.AddJob(createJob("job2")))
 	time.Sleep(50 * time.Millisecond)
-	assert.NoError(t, scheduler.AddJob(pool, createJob("job3")))
+	assert.NoError(t, pool.AddJob(createJob("job3")))
 
 	test.WaitForCondition(t, 2*time.Second, func() bool {
 		mu.Lock()
@@ -355,46 +353,45 @@ func TestSequentialJobExecutionWithLimitedConcurrency(t *testing.T) {
 }
 
 func TestRetryMechanismBehavior(t *testing.T) {
-	orb := New(context.Background())
-	p := orb.CreatePool(PoolConfig{
+	p, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    3,
 		CheckInterval: 10 * time.Millisecond,
-	}, newDefaultMon())
-
-	fn := func(ctrl FnControl) error {
+	}, monitoring.New())
+	assert.NoError(t, err)
+	fn := func(ctrl orbit.FnControl) error {
 		return errors.New("oops")
 	}
-	intervalCfg := Interval{
+	intervalCfg := orbit.Interval{
 		Time: 50 * time.Millisecond,
 	}
 
-	jobsArr := []Job{
+	jobsArr := []orbit.Job{
 		{
 			ID:       "no-retry",
 			Fn:       fn,
-			Retry:    Retry{Active: false},
+			Retry:    orbit.Retry{Active: false},
 			Interval: intervalCfg,
 		},
 		{
 			ID:       "3-retry",
 			Fn:       fn,
-			Retry:    Retry{Active: true, Count: 3},
+			Retry:    orbit.Retry{Active: true, Count: 3},
 			Interval: intervalCfg,
 		},
 		{
 			ID:       "infinite-retry",
 			Fn:       fn,
-			Retry:    Retry{Active: true},
+			Retry:    orbit.Retry{Active: true},
 			Interval: intervalCfg,
 		},
 	}
 
-	err := p.Run()
+	err = p.Run()
 	assert.NoError(t, err)
 	defer p.Kill()
 
 	for _, job := range jobsArr {
-		err = orb.AddJob(p, job)
+		err = p.AddJob(job)
 		assert.NoError(t, err)
 	}
 
@@ -402,36 +399,35 @@ func TestRetryMechanismBehavior(t *testing.T) {
 
 	metrics := p.GetMetrics()
 
-	state1 := metrics["no-retry"].(JobState)
-	assert.Equal(t, JobStatus("error"), state1.Status)
+	state1 := metrics["no-retry"].(orbit.JobState)
+	assert.Equal(t, orbit.JobStatus("error"), state1.Status)
 	assert.Equal(t, 1, state1.Failure, "no-retry should fail exactly once")
 
-	state2 := metrics["3-retry"].(JobState)
-	assert.Equal(t, JobStatus("error"), state2.Status)
+	state2 := metrics["3-retry"].(orbit.JobState)
+	assert.Equal(t, orbit.JobStatus("error"), state2.Status)
 	assert.Equal(t, 4, state2.Failure, "3-retry should fail once + 3 retries = 4 failures")
 
-	state3 := metrics["infinite-retry"].(JobState)
+	state3 := metrics["infinite-retry"].(orbit.JobState)
 	assert.GreaterOrEqual(t, state3.Failure, 5, "infinite-retry should have at least 5 failures")
 }
 
 func TestCronJobExecutionAndManualStop(t *testing.T) {
-	orb := New(context.Background())
 
 	var counter int
 	var mu sync.Mutex
 
 	firstRunDone := make(chan struct{})
 
-	pool := orb.CreatePool(PoolConfig{
+	pool, err := orbit.CreatePool(context.Background(), orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 100 * time.Millisecond,
-	}, newDefaultMon())
-
+	}, monitoring.New())
+	assert.NoError(t, err)
 	jobID := "cron-increment-job"
-	jobCfg := Job{
+	jobCfg := orbit.Job{
 		ID:   jobID,
 		Name: "Increment counter every minute",
-		Fn: func(ctrl FnControl) error {
+		Fn: func(ctrl orbit.FnControl) error {
 			mu.Lock()
 			fmt.Printf("[%s] started\n", jobID)
 			counter++
@@ -444,10 +440,10 @@ func TestCronJobExecutionAndManualStop(t *testing.T) {
 
 			return nil
 		},
-		Interval: Interval{CronExpr: "*/1 * * * *"},
+		Interval: orbit.Interval{CronExpr: "*/1 * * * *"},
 	}
 
-	err := orb.AddJob(pool, jobCfg)
+	err = pool.AddJob(jobCfg)
 	assert.NoError(t, err)
 
 	err = pool.Run()
@@ -474,10 +470,10 @@ func TestCronJobExecutionAndManualStop(t *testing.T) {
 	stateRaw, ok := metrics[jobID]
 	assert.True(t, ok, "Expected to find job metrics")
 
-	state, ok := stateRaw.(JobState)
+	state, ok := stateRaw.(orbit.JobState)
 	assert.True(t, ok, "Expected JobState type")
 
-	assert.Equal(t, JobStatus("stopped"), state.Status, "Job should be stopped")
+	assert.Equal(t, orbit.JobStatus("stopped"), state.Status, "Job should be stopped")
 
 	// Counter must be 2 (executed twice)
 	mu.Lock()
@@ -489,21 +485,19 @@ func TestCronJobExecutionAndManualStop(t *testing.T) {
 
 func TestPool_GracefulKill(t *testing.T) {
 	ctx := context.Background()
-	orb := New(ctx)
-
-	pool := orb.CreatePool(PoolConfig{
+	pool, err := orbit.CreatePool(ctx, orbit.PoolConfig{
 		MaxWorkers:    2,
 		CheckInterval: 50 * time.Millisecond,
-	}, newDefaultMon())
-
+	}, monitoring.New())
+	assert.NoError(t, err)
 	jobID := "kill-job"
 	started := make(chan struct{})
 
 	// Добавляем задачу
-	err := orb.AddJob(pool, Job{
+	err = pool.AddJob(orbit.Job{
 		ID:   jobID,
 		Name: "Kill Job Example",
-		Fn: func(ctrl FnControl) error {
+		Fn: func(ctrl orbit.FnControl) error {
 			fmt.Println("[kill-job] started")
 			close(started)
 			select {
@@ -515,7 +509,7 @@ func TestPool_GracefulKill(t *testing.T) {
 				return ctrl.Context().Err()
 			}
 		},
-		Interval: Interval{Time: 1 * time.Minute}, // чтобы не было автоповтора
+		Interval: orbit.Interval{Time: 1 * time.Minute}, // чтобы не было автоповтора
 	})
 	assert.NoError(t, err)
 
@@ -538,9 +532,9 @@ func TestPool_GracefulKill(t *testing.T) {
 	stateRaw, ok := metrics[jobID]
 	assert.True(t, ok, "Expected to find job metrics")
 
-	state, ok := stateRaw.(JobState)
+	state, ok := stateRaw.(orbit.JobState)
 	assert.True(t, ok, "Expected JobState type")
 
-	assert.Equal(t, JobStatus("stopped"), state.Status, "Job should be stopped after kill")
+	assert.Equal(t, orbit.JobStatus("stopped"), state.Status, "Job should be stopped after kill")
 	assert.Equal(t, "pool shutdown", state.Error.JobError.Error(), "Expected pool shutdown error")
 }

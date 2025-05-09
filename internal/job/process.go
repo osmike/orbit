@@ -1,8 +1,8 @@
 package job
 
 import (
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
+	"github.com/osmike/orbit/internal/domain"
+	errs "github.com/osmike/orbit/internal/error"
 	"time"
 )
 
@@ -63,7 +63,7 @@ func (j *Job) ProcessRun() error {
 // ProcessError applies retry logic after a job execution failure.
 //
 // Behavior:
-//   - If retries are available, the job is rescheduled by setting status to Completed.
+//   - If retries are available, the job is rescheduled by setting status to complete.
 //   - If retries are exhausted or disabled, the job is finalized (Ended) and removed from the pool.
 //     (Note: In this case, execution errors are not stored in the final state.)
 //
