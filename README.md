@@ -162,7 +162,7 @@ mainFn := func(ctrl orb.FnControl) error {
 
 Then configure the job like this:
 ```go
-jobCfg := orbit.JobConfig{
+jobCfg := orbit.Job{
     ID:       jobID,
     Name:     "Weekly DB Upload",
     Fn:       mainFn,
@@ -232,11 +232,11 @@ pool, _ := orbit.CreatePool(context.Background(), context.Background(), orbit.Po
     CheckInterval: 50 * time.Millisecond,  // quick job scanning
 }, nil)
 
-createJob := func(id string, delay time.Duration) orbit.JobConfig {
-    return orbit.JobConfig{
+createJob := func(id string, delay time.Duration) orbit.Job {
+    return orbit.Job{
         ID:       id,
         Name:     fmt.Sprintf("Job %s", id),
-        Interval: orbit.IntervalConfig{Time: time.Second}, // runs every 1s
+        Interval: orbit.Interval{Time: time.Second}, // runs every 1s
         Fn: func(ctrl orbit.FnControl) error {
             fmt.Printf("[%s] Started at %v\n", id, time.Now())
             time.Sleep(time.Second)
@@ -305,16 +305,16 @@ This example demonstrates a full lifecycle job that logs execution through each 
 ```go
 var logger = log.New(os.Stdout, "", log.LstdFlags)
 
-job := orbit.JobConfig{
+job := orbit.Job{
     ID:   "hooked-job",
     Name: "Lifecycle Logging Demo",
-    Interval: orbit.IntervalConfig{Time: 1 * time.Second},
+    Interval: orbit.Interval{Time: 1 * time.Second},
     Fn: func(ctrl orbit.FnControl) error {
         logger.Println("[main] syncing data...")
         time.Sleep(300 * time.Millisecond)
         return errors.New("sync failed") // force error for demo
     },
-    Hooks: orbit.HooksFunc{
+    Hooks: orbit.Hooks{
         OnStart: orbit.Hook{
             Fn: func(ctrl orbit.FnControl, err error) error {
                 logger.Println("[hook] OnStart: job starting...")
@@ -398,6 +398,7 @@ import (
 
 func main() {
 
+
     pool, _ := orbit.CreatePool(context.Background(), orbit.PoolConfig{
         MaxWorkers:    3,
         CheckInterval: 10 * time.Millisecond,
@@ -408,32 +409,32 @@ func main() {
     }
 
     // Define three jobs:
-    jobs := []orbit.JobConfig{
+    jobs := []orbit.Job{
         {
             ID: "no-retry",
             Fn: failFn,
-            Retry: orbit.RetryConfig{
+            Retry: orbit.Retry{
                 Active: false, // No retries — fail once and stop
             },
-            Interval: orbit.IntervalConfig{Time: 50 * time.Millisecond},
+            Interval: orbit.Interval{Time: 50 * time.Millisecond},
         },
         {
             ID: "three-retry",
             Fn: failFn,
-            Retry: orbit.RetryConfig{
+            Retry: orbit.Retry{
                 Active: true,
                 Count:  3, // Retry up to 3 times after initial failure
             },
-            Interval: orbit.IntervalConfig{Time: 50 * time.Millisecond},
+            Interval: orbit.Interval{Time: 50 * time.Millisecond},
         },
         {
             ID: "infinite-retry",
             Fn: failFn,
-            Retry: orbit.RetryConfig{
+            Retry: orbit.Retry{
                 Active: true,
                 Count:  0, // 0 means infinite retries!
             },
-            Interval: orbit.IntervalConfig{Time: 50 * time.Millisecond},
+            Interval: orbit.Interval{Time: 50 * time.Millisecond},
         },
     }
 
@@ -505,12 +506,13 @@ import (
 
 func main() {
 
+
     pool, _ := orbit.CreatePool(context.Background(), orbit.PoolConfig{
         MaxWorkers:    1,
         CheckInterval: 50 * time.Millisecond,
     }, nil)
 
-    longJob := orbit.JobConfig{
+    longJob := orbit.Job{
         ID: "long-running-job",
         Fn: func(ctrl orbit.FnControl) error {
             fmt.Println("Job started")
@@ -518,7 +520,7 @@ func main() {
             fmt.Println("Job canceled:", ctrl.Context().Err())
             return ctrl.Context().Err()
         },
-        Interval: orbit.IntervalConfig{Time: 1 * time.Hour}, // Never intended to complete
+        Interval: orbit.Interval{Time: 1 * time.Hour}, // Never intended to complete
     }
 
     _ = pool.AddJob(longJob)
@@ -602,7 +604,7 @@ Just pass your custom implementation when creating a Pool:
 ```go
 myMon := NewCustomMonitoring()
 
-pool, _ := orb.CreatePool(orbit.PoolConfig{
+pool := orb.CreatePool(orbit.PoolConfig{
     MaxWorkers: 10,
 }, myMon)
 ```
