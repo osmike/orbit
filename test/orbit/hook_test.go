@@ -1,44 +1,47 @@
-package orbit
+package orbit_test
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/osmike/orbit"
+	"github.com/osmike/orbit/test"
+	"github.com/osmike/orbit/test/monitoring"
 	"github.com/stretchr/testify/assert"
 	"log"
-	"orbit/test"
 	"strconv"
 	"testing"
 	"time"
 )
 
 func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
-	scheduler := New(context.Background())
-	mon := newDefaultMon()
+	scheduler := orbit.New(context.Background())
+	mon := monitoring.New()
+	//mon := orbit.newDefaultMon()
 
-	pool := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
 
 	called := false
 
-	withHook := func(ignore bool) Job {
-		return Job{
+	withHook := func(ignore bool) orbit.Job {
+		return orbit.Job{
 			ID: "job-hook-ignore-" + strconv.FormatBool(ignore),
-			Fn: func(ctrl FnControl) error {
+			Fn: func(ctrl orbit.FnControl) error {
 				called = true
 				return nil
 			},
-			Hooks: Hooks{
-				OnStart: Hook{
-					Fn: func(ctrl FnControl, err error) error {
+			orbit.Hooks: orbit.Hooks{
+				OnStart: orbit.Hook{
+					Fn: func(ctrl orbit.FnControl, err error) error {
 						return errors.New("onStart failed")
 					},
 					IgnoreError: ignore,
 				},
 			},
-			Interval: Interval{Time: 0},
+			orbit.Interval: orbit.Interval{Time: 0},
 		}
 	}
 
@@ -54,36 +57,36 @@ func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
 	assert.True(t, called, "Job with IgnoreError=true should have executed")
 
 	metrics := mon.GetMetrics()
-	failState := metrics[jobFail.ID].(JobState)
-	assert.Equal(t, JobStatus("error"), failState.Status)
+	failState := metrics[jobFail.ID].(orbit.JobState)
+	assert.Equal(t, orbit.JobStatus("error"), failState.Status)
 	assert.Contains(t, failState.Error.OnStart.Error(), "onStart failed")
 }
 
 func TestHookOnError_IsCalled(t *testing.T) {
-	scheduler := New(context.Background())
-	mon := newDefaultMon()
+	scheduler := orbit.New(context.Background())
+	mon := orbit.newDefaultMon()
 
-	pool := scheduler.CreatePool(PoolConfig{
+	pool := scheduler.CreatePool(orbit.PoolConfig{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, mon)
 
 	var capturedErr error
 
-	job := Job{
+	job := orbit.Job{
 		ID: "job-with-error-hook",
-		Fn: func(ctrl FnControl) error {
+		Fn: func(ctrl orbit.FnControl) error {
 			return errors.New("simulated failure")
 		},
-		Hooks: Hooks{
-			OnError: Hook{
-				Fn: func(ctrl FnControl, err error) error {
+		orbit.Hooks: orbit.Hooks{
+			OnError: orbit.Hook{
+				Fn: func(ctrl orbit.FnControl, err error) error {
 					capturedErr = err
 					return nil
 				},
 			},
 		},
-		Interval: Interval{Time: 0},
+		orbit.Interval: orbit.Interval{Time: 0},
 	}
 
 	assert.NoError(t, scheduler.AddJob(pool, job))
@@ -98,13 +101,13 @@ func TestHookOnError_IsCalled(t *testing.T) {
 }
 
 func TestHookLoggingJobFlow(t *testing.T) {
-	orb := New(context.Background())
+	orb := orbit.New(context.Background())
 
 	var output bytes.Buffer
 	logger := log.New(&output, "", 0)
 
-	hookFactory := func(hookBoolean *bool, str string) func(ctrl FnControl, err error) error {
-		return func(ctrl FnControl, err error) error {
+	hookFactory := func(hookBoolean *bool, str string) func(ctrl orbit.FnControl, err error) error {
+		return func(ctrl orbit.FnControl, err error) error {
 			logger.Println(str)
 			*hookBoolean = true
 			return nil
@@ -120,10 +123,10 @@ func TestHookLoggingJobFlow(t *testing.T) {
 		onErrorHookExecuted   bool
 		finallyHookExecuted   bool
 	)
-	p := orb.CreatePool(PoolConfig{}, newDefaultMon())
+	p := orb.CreatePool(orbit.PoolConfig{}, orbit.newDefaultMon())
 	defer p.Kill()
 
-	fn := func(ctrl FnControl) error {
+	fn := func(ctrl orbit.FnControl) error {
 		for {
 			select {
 			case <-ctrl.Context().Done():
@@ -146,17 +149,17 @@ func TestHookLoggingJobFlow(t *testing.T) {
 	finallyHook := hookFactory(&finallyHookExecuted, "[hook] finally: job finished...")
 
 	jobID := "job-with-hook"
-	jobCfg := Job{
+	jobCfg := orbit.Job{
 		ID: jobID,
 		Fn: fn,
-		Hooks: Hooks{
-			OnStart:   Hook{Fn: onStartHook},
-			OnStop:    Hook{Fn: onStopHook},
-			OnError:   Hook{Fn: onErrorHook},
-			OnSuccess: Hook{Fn: onSuccessHook},
-			OnPause:   Hook{Fn: onPauseHook},
-			OnResume:  Hook{Fn: onResumeHook},
-			Finally:   Hook{Fn: finallyHook},
+		orbit.Hooks: orbit.Hooks{
+			OnStart:   orbit.Hook{Fn: onStartHook},
+			OnStop:    orbit.Hook{Fn: onStopHook},
+			OnError:   orbit.Hook{Fn: onErrorHook},
+			OnSuccess: orbit.Hook{Fn: onSuccessHook},
+			OnPause:   orbit.Hook{Fn: onPauseHook},
+			OnResume:  orbit.Hook{Fn: onResumeHook},
+			Finally:   orbit.Hook{Fn: finallyHook},
 		},
 	}
 	assert.NoError(t, orb.AddJob(p, jobCfg))

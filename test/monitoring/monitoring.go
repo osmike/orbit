@@ -1,7 +1,7 @@
 package monitoring
 
 import (
-	"orbit/internal/domain"
+	"github.com/osmike/orbit/internal/domain"
 	"sync"
 )
 

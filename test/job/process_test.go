@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"orbit/internal/domain"
-	"orbit/monitoring"
+	"github.com/osmike/orbit/internal/domain"
+	"github.com/osmike/orbit/monitoring"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -2,8 +2,8 @@ package job
 
 import (
 	"errors"
-	"orbit/internal/domain"
-	"orbit/monitoring"
+	"github.com/osmike/orbit/internal/domain"
+	"github.com/osmike/orbit/monitoring"
 	"testing"
 	"time"
 

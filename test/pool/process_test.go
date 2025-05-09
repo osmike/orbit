@@ -2,10 +2,11 @@ package pool
 
 import (
 	"context"
+	"github.com/osmike/orbit/internal/domain"
+	"github.com/osmike/orbit/internal/job"
+	pool2 "github.com/osmike/orbit/internal/pool"
+	"github.com/osmike/orbit/monitoring"
 	"github.com/stretchr/testify/assert"
-	"orbit/internal/domain"
-	"orbit/internal/job"
-	"orbit/monitoring"
 	"sync"
 	"testing"
 	"time"
@@ -25,8 +26,8 @@ func newTestJobProcess(t *testing.T, retryFlag bool, id string, status domain.Jo
 	return j
 }
 
-func newTestPoolProcess() *Pool {
-	p := New(context.Background(), domain.Pool{
+func newTestPoolProcess() *pool2.Pool {
+	p := pool2.New(context.Background(), domain.Pool{
 		MaxWorkers:    1,
 		CheckInterval: 10 * time.Millisecond,
 	}, monitoring.New())
