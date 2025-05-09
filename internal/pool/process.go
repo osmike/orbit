@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// processWaiting checks if a job in the "Waiting" state is ready to execute.
+// ProcessWaiting checks if a job in the "Waiting" state is ready to execute.
 //
 // Behavior:
 //   - If the current time is past the job's scheduled next run time, the job is dispatched for execution.
@@ -20,7 +20,7 @@ import (
 //   - job: The Job instance currently in the Waiting state.
 //   - sem: Semaphore used to limit concurrent execution based on Pool configuration.
 //   - wg: WaitGroup to synchronize the execution lifecycle of active jobs.
-func (p *Pool) processWaiting(job Job, sem chan struct{}, wg *sync.WaitGroup) {
+func (p *Pool) ProcessWaiting(job domain.Job, sem chan struct{}, wg *sync.WaitGroup) {
 	if !job.LockJob() {
 		// someone is already working with this job
 		return
@@ -67,7 +67,7 @@ func (p *Pool) processWaiting(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 		// Mark the job as started, update metrics.
 		job.ProcessStart()
 
-		p.execute(job, sem, wg)
+		p.Execute(job, sem, wg)
 	} else {
 		select {
 		case <-sem:
@@ -76,7 +76,7 @@ func (p *Pool) processWaiting(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 	}
 }
 
-// processRunning monitors a job currently in the "Running" state,
+// ProcessRunning monitors a job currently in the "Running" state,
 // checking for execution timeouts or runtime errors.
 //
 // If the job exceeds its configured timeout, it is marked as Error,
@@ -84,14 +84,14 @@ func (p *Pool) processWaiting(job Job, sem chan struct{}, wg *sync.WaitGroup) {
 //
 // Parameters:
 //   - job: The Job instance currently executing.
-func (p *Pool) processRunning(job Job) {
+func (p *Pool) ProcessRunning(job domain.Job) {
 	err := job.ProcessRun()
 	if err != nil {
 		job.ProcessEnd(domain.Error, err)
 	}
 }
 
-// processCompleted handles the state of a job marked as "Completed".
+// ProcessCompleted handles the state of a job marked as "Completed".
 //
 // It checks if the job has future scheduled executions. If another execution
 // is pending, the job state is reset to "Waiting". Otherwise, the job is marked
@@ -99,7 +99,7 @@ func (p *Pool) processRunning(job Job) {
 //
 // Parameters:
 //   - job: The Job instance that has completed its execution.
-func (p *Pool) processCompleted(job Job) {
+func (p *Pool) ProcessCompleted(job domain.Job) {
 	nextRun := job.GetNextRun()
 
 	if nextRun.After(time.Now()) || time.Now().Equal(nextRun) {
@@ -111,7 +111,7 @@ func (p *Pool) processCompleted(job Job) {
 	job.ProcessEnd(domain.Ended, nil)
 }
 
-// processError manages jobs that have encountered an error during execution.
+// ProcessError manages jobs that have encountered an error during execution.
 //
 // Behavior:
 //   - Attempts to retry the job execution if retries are still allowed.
@@ -124,7 +124,7 @@ func (p *Pool) processCompleted(job Job) {
 // Returns:
 //   - An error if the job could not be removed from the pool.
 //   - nil otherwise.
-func (p *Pool) processError(job Job) error {
+func (p *Pool) ProcessError(job domain.Job) error {
 	if !job.LockJob() {
 		// someone is already working with this job
 		return nil

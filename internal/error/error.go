@@ -36,6 +36,9 @@ var (
 
 	// ErrPoolShutdown is returned when an operation is attempted on a pool that has already been shut down.
 	ErrPoolShutdown = errors.New("pool shutdown")
+
+	// ErrJobFactoryIsNil is returned when job factory is not provided
+	ErrJobFactoryIsNil = errors.New("job factory is nil")
 )
 
 // Scheduling-related validation errors.

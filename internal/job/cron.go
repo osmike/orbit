@@ -18,7 +18,7 @@ type CronSchedule struct {
 	Weekdays []int // Allowed weekday values (0-6, where 0 = Sunday)
 }
 
-// parseField parses an individual cron expression field (e.g., minutes, hours)
+// ParseField parses an individual cron expression field (e.g., minutes, hours)
 // and returns a slice of integers representing the allowed values.
 //
 // Supported syntax:
@@ -34,7 +34,7 @@ type CronSchedule struct {
 // Returns:
 //   - A slice of parsed integer values.
 //   - An error if parsing fails due to invalid syntax or values out of range.
-func parseField(field string, min int, max int) ([]int, error) {
+func ParseField(field string, min int, max int) ([]int, error) {
 	var values []int
 
 	if field == "*" {
@@ -96,23 +96,23 @@ func ParseCron(cronExpr string) (*CronSchedule, error) {
 		return nil, errs.New(errs.ErrInvalidCronExpression, cronExpr)
 	}
 
-	minutes, err := parseField(parts[0], 0, 59)
+	minutes, err := ParseField(parts[0], 0, 59)
 	if err != nil {
 		return nil, fmt.Errorf("minutes field error: %w", err)
 	}
-	hours, err := parseField(parts[1], 0, 23)
+	hours, err := ParseField(parts[1], 0, 23)
 	if err != nil {
 		return nil, fmt.Errorf("hours field error: %w", err)
 	}
-	days, err := parseField(parts[2], 1, 31)
+	days, err := ParseField(parts[2], 1, 31)
 	if err != nil {
 		return nil, fmt.Errorf("days field error: %w", err)
 	}
-	months, err := parseField(parts[3], 1, 12)
+	months, err := ParseField(parts[3], 1, 12)
 	if err != nil {
 		return nil, fmt.Errorf("months field error: %w", err)
 	}
-	weekdays, err := parseField(parts[4], 0, 6)
+	weekdays, err := ParseField(parts[4], 0, 6)
 	if err != nil {
 		return nil, fmt.Errorf("weekdays field error: %w", err)
 	}
@@ -136,23 +136,23 @@ func (cs *CronSchedule) NextRun() time.Time {
 	now := time.Now().Truncate(time.Minute).Add(time.Minute)
 
 	for i := 0; i < 365*24*60; i++ { // Safety limit: search up to 1 year ahead
-		if !contains(cs.Months, int(now.Month())) {
+		if !Contains(cs.Months, int(now.Month())) {
 			now = now.AddDate(0, 1, -now.Day()+1).Truncate(24 * time.Hour)
 			continue
 		}
-		if !contains(cs.Days, now.Day()) {
+		if !Contains(cs.Days, now.Day()) {
 			now = now.AddDate(0, 0, 1).Truncate(24 * time.Hour)
 			continue
 		}
-		if !contains(cs.Hours, now.Hour()) {
+		if !Contains(cs.Hours, now.Hour()) {
 			now = now.Add(time.Hour - time.Duration(now.Minute())*time.Minute).Truncate(time.Hour)
 			continue
 		}
-		if !contains(cs.Minutes, now.Minute()) {
+		if !Contains(cs.Minutes, now.Minute()) {
 			now = now.Add(time.Minute)
 			continue
 		}
-		if !contains(cs.Weekdays, int(now.Weekday())) {
+		if !Contains(cs.Weekdays, int(now.Weekday())) {
 			now = now.AddDate(0, 0, 1).Truncate(24 * time.Hour)
 			continue
 		}
@@ -164,22 +164,22 @@ func (cs *CronSchedule) NextRun() time.Time {
 	return time.Time{}
 }
 
-// matches determines if a given time satisfies the cron schedule conditions.
+// Matches determines if a given time satisfies the cron schedule conditions.
 //
 // Parameters:
 //   - t: Time value to evaluate.
 //
 // Returns:
 //   - true if the provided time matches all cron fields; false otherwise.
-func (cs *CronSchedule) matches(t time.Time) bool {
-	return contains(cs.Minutes, t.Minute()) &&
-		contains(cs.Hours, t.Hour()) &&
-		contains(cs.Days, t.Day()) &&
-		contains(cs.Months, int(t.Month())) &&
-		contains(cs.Weekdays, int(t.Weekday()))
+func (cs *CronSchedule) Matches(t time.Time) bool {
+	return Contains(cs.Minutes, t.Minute()) &&
+		Contains(cs.Hours, t.Hour()) &&
+		Contains(cs.Days, t.Day()) &&
+		Contains(cs.Months, int(t.Month())) &&
+		Contains(cs.Weekdays, int(t.Weekday()))
 }
 
-// contains checks whether a slice of integers contains a specified integer value.
+// Contains checks whether a slice of integers contains a specified integer value.
 //
 // Parameters:
 //   - arr: Slice of integers.
@@ -187,7 +187,7 @@ func (cs *CronSchedule) matches(t time.Time) bool {
 //
 // Returns:
 //   - true if the integer is found in the slice; false otherwise.
-func contains(arr []int, val int) bool {
+func Contains(arr []int, val int) bool {
 	for _, v := range arr {
 		if v == val {
 			return true

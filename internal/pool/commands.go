@@ -18,7 +18,11 @@ import (
 // Returns:
 //   - An error (ErrIDExists, ErrJobWrongStatus) if validation fails.
 //   - nil if the job is successfully added to the pool.
-func (p *Pool) AddJob(job Job) error {
+func (p *Pool) AddJob(cfg domain.JobDTO) error {
+	job, err := p.jf(cfg, p.ctx, p.mon)
+	if err != nil {
+		return err
+	}
 	meta := job.GetMetadata()
 
 	if _, ok := p.jobs.Load(meta.ID); ok {
@@ -47,7 +51,7 @@ func (p *Pool) AddJob(job Job) error {
 //   - An error (ErrJobNotFound) if the specified job does not exist.
 //   - nil if the job is successfully removed.
 func (p *Pool) RemoveJob(id string) error {
-	_, err := p.getJobByID(id)
+	_, err := p.GetJobByID(id)
 	if err != nil {
 		return err
 	}
@@ -68,7 +72,7 @@ func (p *Pool) RemoveJob(id string) error {
 //     is already paused, or cannot be paused.
 //   - nil if the pause request is successful.
 func (p *Pool) PauseJob(id string, timeout time.Duration) error {
-	job, err := p.getJobByID(id)
+	job, err := p.GetJobByID(id)
 	if err != nil {
 		return err
 	}
@@ -88,11 +92,11 @@ func (p *Pool) PauseJob(id string, timeout time.Duration) error {
 //     or is in an invalid state for resumption.
 //   - nil if the resume operation is successful.
 func (p *Pool) ResumeJob(id string) error {
-	job, err := p.getJobByID(id)
+	job, err := p.GetJobByID(id)
 	if err != nil {
 		return err
 	}
-	return job.Resume(p.Ctx)
+	return job.Resume(p.ctx)
 }
 
 // StopJob terminates execution of the specified job.
@@ -106,7 +110,7 @@ func (p *Pool) ResumeJob(id string) error {
 //   - An error (ErrJobNotFound) if the specified job does not exist.
 //   - nil if the job is successfully stopped.
 func (p *Pool) StopJob(id string) error {
-	job, err := p.getJobByID(id)
+	job, err := p.GetJobByID(id)
 	if err != nil {
 		return err
 	}
