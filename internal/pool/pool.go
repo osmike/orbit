@@ -1,105 +1,60 @@
-// Package pool provides the core scheduling and orchestration engine for job execution.
+// Package pool implements the core orchestration engine responsible for executing and managing scheduled jobs.
 //
-// It is responsible for:
-//   - Concurrent execution of scheduled jobs with respect to MaxWorkers.
-//   - Lifecycle management of jobs (waiting, running, completed, error).
-//   - Periodic polling of job states at configurable intervals.
-//   - Graceful shutdown and cleanup of job state and resources.
+// It is designed as an isolated execution unit that handles:
+//   - Concurrent job execution with worker limit control.
+//   - Job state transitions (Waiting, Running, Completed, Error).
+//   - Periodic polling and scheduling based on intervals or cron rules.
+//   - Graceful cancellation and shutdown of the execution engine.
+//   - Integration with pluggable monitoring and external job factories.
 //
-// Each pool operates as an independent execution unit, isolated via context for cancellation
-// and monitoring support.
+// The pool is initialized with a context, lifecycle configuration, monitoring implementation,
+// and a JobFactory — a function responsible for creating job instances from raw configuration (JobDTO).
 package pool
 
 import (
 	"context"
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
+	"github.com/osmike/orbit/internal/domain"
+	errs "github.com/osmike/orbit/internal/error"
 	"sync"
 	"time"
 )
 
-// Job represents an executable task managed by the scheduler.
-// It encapsulates lifecycle management methods, status updates, execution logic, and retry mechanisms.
+// JobFactory defines a function signature responsible for converting a JobDTO
+// into a fully initialized and executable Job instance.
 //
-// Each Job implementation must provide thread-safe access to internal state and logic,
-// ensuring safe concurrent interactions within the Pool environment.
-type Job interface {
-	// GetMetadata returns the job's configuration metadata.
-	GetMetadata() domain.JobDTO
+// This abstraction allows the Pool to remain decoupled from any specific job implementation,
+// following Dependency Inversion and facilitating testing or customization.
+type JobFactory func(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (domain.Job, error)
 
-	// SetTimeout sets the max allowed job execution time; 0 disables timeout tracking.
-	SetTimeout(timeout time.Duration)
-
-	// GetStatus returns the current execution status of the job.
-	GetStatus() domain.JobStatus
-
-	// UpdateState partially updates the job's state with non-zero fields from the provided DTO.
-	UpdateState(state domain.StateDTO)
-
-	// GetNextRun calculates and returns the next scheduled execution time for the job.
-	GetNextRun() time.Time
-
-	// ProcessStart marks the job's state as "Running", initializing execution metrics and metadata.
-	ProcessStart()
-
-	// ProcessRun monitors the job during execution, checking for timeout conditions.
-	// Returns ErrJobTimeout if the job exceeds its configured timeout.
-	ProcessRun() error
-
-	// ProcessEnd finalizes the job state after execution completes, recording metrics and handling errors.
-	ProcessEnd(status domain.JobStatus, err error)
-
-	// ProcessError performs retry logic and updates the job state in case of failure.
-	ProcessError() error
-
-	// CanExecute checks if the job meets conditions required to start execution immediately.
-	// Returns an error indicating why execution is not allowed, or nil if eligible.
-	CanExecute() error
-
-	// Execute performs the job's main execution logic, handling internal lifecycle hooks and error handling.
-	Execute() error
-
-	// Stop forcibly stops job execution and updates its state accordingly.
-	Stop() error
-
-	// Pause attempts to pause job execution with a specified timeout.
-	Pause(timeout time.Duration) error
-
-	// Resume resumes execution of a paused job, if applicable.
-	Resume(ctx context.Context) error
-
-	// LockJob acquires exclusive execution access to the job if it is available.
-	LockJob() bool
-
-	// UnlockJob releases exclusive execution access to the job.
-	UnlockJob()
-}
-
-// Pool manages scheduling, execution, lifecycle control, and concurrency of multiple jobs.
+// Pool manages the lifecycle and scheduling of jobs,
+// including their concurrent execution, state transitions, and shutdown behavior.
 //
-// Pool utilizes a background worker loop, controlled by context cancellation,
-// to continuously check and execute jobs based on their defined schedules and states.
+// Jobs are stored in a concurrent map and executed periodically based on their scheduling configuration.
+// The pool uses a worker semaphore to enforce concurrency limits and relies on the JobFactory to create jobs.
 type Pool struct {
-	domain.Pool                    // Configuration settings (max workers, check intervals, idle timeouts).
-	Mon         domain.Monitoring  // Monitoring implementation for capturing execution metrics.
-	jobs        sync.Map           // Concurrent-safe storage of active jobs.
-	Ctx         context.Context    // Execution context for the scheduler pool.
-	cancel      context.CancelFunc // Context cancellation function to gracefully stop the scheduler.
-	killed      bool               // Indicates whether the pool has been terminated.
+	domain.Pool                    // Embeds basic configuration: MaxWorkers, CheckInterval, IdleTimeout.
+	mon         domain.Monitoring  // Monitoring sink for job execution metrics.
+	jobs        sync.Map           // Concurrent-safe storage of all active jobs by ID.
+	ctx         context.Context    // Root context shared by all jobs and pool lifecycle.
+	cancel      context.CancelFunc // Function to cancel the pool context.
+	killed      bool               // Flag indicating whether the pool has been terminated and cannot be restarted.
+	jf          JobFactory         // External job factory to create Job instances from configuration.
 }
 
-// New initializes and configures a new Pool instance with provided settings.
+// New constructs and initializes a new Pool instance based on the provided configuration and job factory.
 //
-// It sets default values for configuration parameters if they are not explicitly defined.
+// It sets default values for MaxWorkers, CheckInterval, and IdleTimeout if they are unset (zero values).
 //
 // Parameters:
-//   - ctx: Parent context for cancellation and graceful shutdown control.
-//   - cfg: Pool configuration specifying worker limits, intervals, and timeouts.
-//   - mon: Monitoring implementation for capturing job execution metrics.
+//   - ctx: Parent context used for cancellation and lifetime control.
+//   - cfg: PoolConfig with concurrency and timing settings.
+//   - mon: Monitoring interface used for collecting job metrics.
+//   - jf: JobFactory used to create executable Job instances from configuration.
 //
 // Returns:
-//   - A fully initialized Pool instance ready for execution.
-func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) *Pool {
+//   - A fully initialized Pool instance ready to run jobs.
+//   - An error if the JobFactory is nil.
+func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring, jf JobFactory) (*Pool, error) {
 	if cfg.MaxWorkers == 0 {
 		cfg.MaxWorkers = domain.DEFAULT_NUM_WORKERS
 	}
@@ -110,48 +65,46 @@ func New(ctx context.Context, cfg domain.Pool, mon domain.Monitoring) *Pool {
 		cfg.IdleTimeout = domain.DEFAULT_IDLE_TIMEOUT
 	}
 
+	if jf == nil {
+		return nil, errs.New(errs.ErrJobFactoryIsNil, "pool error")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Pool{
 		Pool:   cfg,
-		Ctx:    ctx,
+		ctx:    ctx,
 		cancel: cancel,
-		Mon:    mon,
+		mon:    mon,
 		killed: false,
-	}
+		jf:     jf,
+	}, nil
 }
 
-// getJobByID retrieves a job instance by its unique identifier.
+// GetJobByID looks up a job in the pool by its unique ID.
 //
-// Parameters:
-//   - id: Unique identifier of the job.
-//
-// Returns:
-//   - The Job instance matching the provided ID.
-//   - An error (ErrJobNotFound) if the job is not present in the pool.
-func (p *Pool) getJobByID(id string) (Job, error) {
+// Returns the job instance if found, or ErrJobNotFound otherwise.
+func (p *Pool) GetJobByID(id string) (domain.Job, error) {
 	jobInterface, ok := p.jobs.Load(id)
 	if !ok {
 		return nil, errs.New(errs.ErrJobNotFound, id)
 	}
-	return jobInterface.(Job), nil
+	return jobInterface.(domain.Job), nil
 }
 
-// Run initiates the scheduler's main execution loop, periodically checking and managing jobs based on their states.
+// Run launches the main scheduler loop that monitors job states and dispatches jobs for execution.
 //
-// Execution flow:
-//   - Runs continuously until the Pool's context is canceled.
-//   - Checks job states at regular intervals defined by CheckInterval.
-//   - Manages job lifecycle transitions (waiting, running, completed, error).
-//   - Controls concurrency using a semaphore to enforce MaxWorkers limits.
-//   - Upon shutdown:
-//   - Waits for all active job executions to complete.
-//   - Updates all remaining jobs to Stopped state with an ErrPoolShutdown error.
-//   - Removes all jobs from internal storage.
-//   - Marks the Pool as permanently killed (cannot be restarted).
+// Behavior:
+//   - Executes jobs based on their status and readiness (Waiting, Running, Completed, Error).
+//   - Enforces MaxWorkers using a semaphore.
+//   - Periodically polls jobs at the configured CheckInterval.
+//   - Gracefully handles shutdown via context cancellation:
+//   - Waits for in-progress jobs to complete.
+//   - Updates all jobs to Stopped state with a shutdown error.
+//   - Clears internal job storage and marks the pool as killed.
 //
 // Returns:
-//   - An error (ErrPoolShutdown) if the pool was previously terminated.
+//   - ErrPoolShutdown if the pool was already stopped or after termination.
 func (p *Pool) Run() (err error) {
 	if p.killed {
 		return errs.ErrPoolShutdown
@@ -166,11 +119,11 @@ func (p *Pool) Run() (err error) {
 
 		for {
 			select {
-			case <-p.Ctx.Done():
+			case <-p.ctx.Done():
 				wg.Wait()
 
 				p.jobs.Range(func(key, value interface{}) bool {
-					job := value.(Job)
+					job := value.(domain.Job)
 					job.UpdateState(domain.StateDTO{
 						Status: domain.Stopped,
 						Error: domain.StateError{
@@ -187,17 +140,17 @@ func (p *Pool) Run() (err error) {
 
 			case <-ticker.C:
 				p.jobs.Range(func(key, value any) bool {
-					job := value.(Job)
+					job := value.(domain.Job)
 					status := job.GetStatus()
 					switch status {
 					case domain.Waiting:
-						p.processWaiting(job, sem, &wg)
+						p.ProcessWaiting(job, sem, &wg)
 					case domain.Running:
-						p.processRunning(job)
+						p.ProcessRunning(job)
 					case domain.Completed:
-						p.processCompleted(job)
+						p.ProcessCompleted(job)
 					case domain.Error:
-						p.processError(job)
+						p.ProcessError(job)
 					}
 					return true
 				})
@@ -208,13 +161,9 @@ func (p *Pool) Run() (err error) {
 	return err
 }
 
-// GetMetrics retrieves all job metrics currently tracked by the Pool.
+// GetMetrics returns a snapshot of all job metrics collected by the monitoring implementation.
 //
-// This method returns the result of Mon.GetMetrics(), where Mon is the monitoring system
-// provided during pool creation (either custom or the default implementation).
-//
-// The returned map contains job IDs as keys and job state or metric objects as values.
-// Use this method to collect runtime metrics for all jobs in the pool.
+// This includes runtime data such as execution time, success/failure counts, current state, etc.
 func (p *Pool) GetMetrics() map[string]interface{} {
-	return p.Mon.GetMetrics()
+	return p.mon.GetMetrics()
 }

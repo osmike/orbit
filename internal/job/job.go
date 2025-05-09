@@ -30,8 +30,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"orbit/internal/domain"
-	errs "orbit/internal/error"
+	"github.com/osmike/orbit/internal/domain"
+	errs "github.com/osmike/orbit/internal/error"
 	"sync"
 	"time"
 )
@@ -50,7 +50,7 @@ type Job struct {
 
 	mon domain.Monitoring // Monitoring interface for metrics tracking.
 
-	state *state       // Internal runtime state tracking job lifecycle and metrics.
+	state *State       // Internal runtime state tracking job lifecycle and metrics.
 	mu    sync.RWMutex // Guards mutable configuration fields (e.g., Timeout).
 
 	pauseCh  chan struct{} // Signals the job to pause execution.
@@ -80,7 +80,7 @@ type Job struct {
 // Returns:
 //   - Pointer to a new Job instance.
 //   - Error if validation fails or initialization is inconsistent.
-func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job, error) {
+func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (domain.Job, error) {
 	job := &Job{
 		JobDTO: jobDTO,
 	}
@@ -115,7 +115,7 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (*Job
 	}
 
 	job.mon = mon
-	job.state = newState(job.ID, job.mon)
+	job.state = NewState(job.ID, job.mon)
 	job.state.NextRun = job.SetNextRun(startTime)
 	job.ctx, job.cancel = context.WithCancel(ctx)
 
