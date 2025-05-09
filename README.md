@@ -172,7 +172,7 @@ jobCfg := orbit.JobConfig{
 ```
 And add it to a running pool:
 ```go
-orb.AddJob(pool, jobCfg)
+pool.AddJob(jobCfg)
 ```
 
 #### **🧠 Key Concepts**
