@@ -34,30 +34,6 @@ func (j *Job) CanExecute() error {
 	return nil
 }
 
-// SetNextRun determines and schedules the next job execution time.
-//
-// Behavior:
-//   - If the job uses a cron schedule, fetches the next run time and advances the internal cron iterator.
-//   - If using a fixed interval, adds Interval.Time to the provided startTime.
-//
-// Parameters:
-//   - startTime: The baseline time to calculate the next run from.
-//
-// Returns:
-//   - The calculated next execution time.
-
-func (j *Job) SetNextRun(startTime time.Time) time.Time {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-
-	if j.cron != nil {
-		res := j.cron.NextRun()
-		return res
-	}
-
-	return startTime.Add(j.Interval.Time)
-}
-
 // GetNextRun retrieves the scheduled time for the job's next execution.
 //
 // Returns:

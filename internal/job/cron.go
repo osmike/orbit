@@ -126,14 +126,23 @@ func ParseCron(cronExpr string) (*CronSchedule, error) {
 	}, nil
 }
 
-// NextRun calculates and returns the next scheduled execution time based on the cron schedule.
-// It efficiently skips unsuitable dates and times to find the next match, looking ahead up to one year.
+// NextRun returns the next scheduled execution time that matches the cron pattern.
+//
+// The method starts from the provided `startTime`, rounded up to the next minute,
+// and searches forward minute by minute for a valid match.
+// It checks the schedule components in the following order: Month, Day, Hour, Minute, Weekday.
+// If a component does not match, it skips forward efficiently to the next possible candidate.
+//
+// To prevent infinite loops on malformed cron definitions, the search is limited to 1 year ahead.
+//
+// Parameters:
+//   - startTime: The reference point from which to begin the search.
 //
 // Returns:
-//   - The next scheduled execution time (time.Time).
-//   - Zero-value time if no valid execution time is found within a year (unlikely scenario).
-func (cs *CronSchedule) NextRun() time.Time {
-	now := time.Now().Truncate(time.Minute).Add(time.Minute)
+//   - time.Time: The next valid execution time.
+//   - Zero time (time.Time{}) if no match is found within 1 year (should not occur in normal use).
+func (cs *CronSchedule) NextRun(startTime time.Time) time.Time {
+	now := startTime.Truncate(time.Minute).Add(time.Minute)
 
 	for i := 0; i < 365*24*60; i++ { // Safety limit: search up to 1 year ahead
 		if !Contains(cs.Months, int(now.Month())) {
