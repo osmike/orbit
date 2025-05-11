@@ -88,6 +88,6 @@ func TestCronSchedule_NextRun(t *testing.T) {
 		Weekdays: []int{3, 4, 5, 6}, // Thu, Fri, Sat, Sun
 	}
 
-	next := cs.NextRun()
+	next := cs.NextRun(time.Now())
 	assert.False(t, next.IsZero())
 }

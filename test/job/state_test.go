@@ -13,7 +13,7 @@ import (
 
 func TestState_Init(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-123", mon)
+	s := job.NewState("job-123", nil, mon)
 	assert.Equal(t, "job-123", s.JobID)
 	assert.Equal(t, domain.Waiting, s.Status)
 	assert.NotNil(t, s.Data)
@@ -21,14 +21,14 @@ func TestState_Init(t *testing.T) {
 
 func TestState_SetAndGetStatus(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-1", mon)
+	s := job.NewState("job-1", nil, mon)
 	s.SetStatus(domain.Running)
 	assert.Equal(t, domain.Running, s.GetStatus())
 }
 
 func TestState_TrySetStatus(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-1", mon)
+	s := job.NewState("job-1", nil, mon)
 
 	s.SetStatus(domain.Waiting)
 	ok := s.TrySetStatus([]domain.JobStatus{domain.Waiting}, domain.Running)
@@ -42,7 +42,7 @@ func TestState_TrySetStatus(t *testing.T) {
 
 func TestState_UpdateExecutionTime(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-1", mon)
+	s := job.NewState("job-1", nil, mon)
 	s.StartAt = time.Now()
 
 	time.Sleep(5 * time.Millisecond)
@@ -54,7 +54,7 @@ func TestState_UpdateExecutionTime(t *testing.T) {
 
 func TestState_Update(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-1", mon)
+	s := job.NewState("job-1", nil, mon)
 
 	now := time.Now()
 	NewState := domain.StateDTO{
@@ -78,7 +78,7 @@ func TestState_Update(t *testing.T) {
 
 func TestState_GetState(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-1", mon)
+	s := job.NewState("job-1", nil, mon)
 	s.SetStatus(domain.Running)
 	st := s.GetState()
 	assert.Equal(t, domain.Running, st.Status)
@@ -87,13 +87,13 @@ func TestState_GetState(t *testing.T) {
 
 func TestState_SetEndState_Valid(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-1", mon)
+	s := job.NewState("job-1", nil, mon)
 	s.SetStatus(domain.Running)
 	s.StartAt = time.Now()
 
 	time.Sleep(20 * time.Millisecond)
 
-	s.SetEndState(true, domain.Completed, nil)
+	s.SetEndState(true, domain.Completed, nil, 0)
 	time.Sleep(20 * time.Millisecond)
 	state := s.GetState()
 
@@ -105,24 +105,24 @@ func TestState_SetEndState_Valid(t *testing.T) {
 
 func TestState_SetEndState_InvalidTransition(t *testing.T) {
 	mon := monitoring.New()
-	s := job.NewState("job-1", mon)
+	s := job.NewState("job-1", nil, mon)
 	s.SetStatus(domain.Completed)
 	s.StartAt = time.Now()
 
-	s.SetEndState(true, domain.Completed, nil)
+	s.SetEndState(true, domain.Completed, nil, 0)
 
 	state := s.GetState()
 	assert.Equal(t, domain.Completed, state.Status)
 
 	s.SetStatus(domain.Paused)
 	s.StartAt = time.Now()
-	s.SetEndState(true, domain.Completed, nil)
+	s.SetEndState(true, domain.Completed, nil, 0)
 	state = s.GetState()
 	assert.Equal(t, domain.Completed, state.Status)
 
 	s.SetStatus(domain.Stopped)
 	s.StartAt = time.Now()
-	s.SetEndState(true, domain.Completed, nil)
+	s.SetEndState(true, domain.Completed, nil, 0)
 	state = s.GetState()
 	assert.Equal(t, domain.Stopped, state.Status)
 }

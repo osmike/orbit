@@ -53,9 +53,9 @@ func TestHookOnStartError_RespectsIgnoreFlag(t *testing.T) {
 	err = pool.Run()
 	assert.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
-
+	//
 	assert.True(t, called, "Job with IgnoreError=true should have executed")
-
+	//
 	metrics := mon.GetMetrics()
 	failState := metrics[jobFail.ID].(orbit.JobState)
 	assert.Equal(t, orbit.JobStatus("error"), failState.Status)

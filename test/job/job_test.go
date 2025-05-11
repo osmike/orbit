@@ -2,6 +2,7 @@ package job_test
 
 import (
 	"context"
+	"fmt"
 	"github.com/osmike/orbit/internal/job"
 	"github.com/osmike/orbit/test/monitoring"
 	"testing"
@@ -145,6 +146,7 @@ func TestJob_GetStateCopy_AfterHookWrites(t *testing.T) {
 			},
 		},
 		Fn: func(ctrl domain.FnControl) error {
+			fmt.Println("job started")
 			data := ctrl.GetData()
 			val, ok := data["foo"]
 			assert.True(t, ok)

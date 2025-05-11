@@ -40,14 +40,13 @@ func (j *Job) Execute() (err error) {
 		if finalizeErr := j.finalizeExecution(); finalizeErr != nil {
 			err = finalizeErr
 		}
-		j.handleError(err)
+		j.handleError(err, nil)
 	}()
 
 	// Run OnStart hook
 	if err = j.runHook(j.Hooks.OnStart, errs.ErrOnStartHook, nil); err != nil {
 		return err
 	}
-
 	// Run main job function
 	if execErr := j.Fn(j.ctrl); execErr != nil {
 		// Run OnError hook (errors from it are logged, not returned)
@@ -84,12 +83,11 @@ func (j *Job) runHook(hook domain.Hook, errType error, execErr error) (err error
 	if hook.Fn == nil {
 		return
 	}
-
 	defer func() {
 		if r := recover(); r != nil {
 			err = errs.New(errType, fmt.Sprintf("job id: %s, panic: %v", j.ID, r))
 		}
-		j.handleError(err)
+		j.handleError(err, errType)
 		if hook.IgnoreError {
 			err = nil
 		}

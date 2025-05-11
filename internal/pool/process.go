@@ -8,18 +8,28 @@ import (
 	"time"
 )
 
-// ProcessWaiting checks if a job in the "Waiting" state is ready to execute.
+// ProcessWaiting evaluates whether a job in the "Waiting" state is ready for execution,
+// and dispatches it if all conditions are met.
+//
+// This method is intended to be called periodically by the pool scheduler to
+// identify and start due jobs. It ensures exclusive job processing via locking
+// and limits concurrency using a semaphore with timeout protection.
 //
 // Behavior:
-//   - If the current time is past the job's scheduled next run time, the job is dispatched for execution.
-//   - Acquires a semaphore slot with timeout protection to avoid deadlocks.
-//   - If execution is not possible (e.g., wrong status, not yet time), updates job state accordingly.
-//   - If the job was not executed after acquiring the slot, the semaphore slot is manually released.
+//   - Acquires an internal lock to ensure exclusive handling of the job.
+//   - Checks whether the current time is equal to or after the job's NextRun time.
+//   - Evaluates the job's eligibility for execution using CanExecute().
+//   - If execution is not yet due or is otherwise invalid, the job is skipped.
+//   - Attempts to acquire a semaphore slot within a timeout window (default: 5s).
+//   - If slot acquisition fails, marks the job as errored (ErrTooManyJobs).
+//   - If job's CanExecute returns execution-blocking errors (e.g., expired, bad status):
+//   - Marks job as Ended or Error accordingly.
+//   - If eligible and a slot is available, schedules the job for execution via Execute().
 //
 // Parameters:
-//   - job: The Job instance currently in the Waiting state.
-//   - sem: Semaphore used to limit concurrent execution based on Pool configuration.
-//   - wg: WaitGroup to synchronize the execution lifecycle of active jobs.
+//   - job: The job instance currently in the "Waiting" state.
+//   - sem: A buffered channel used as a semaphore to limit concurrent execution.
+//   - wg: A WaitGroup used to track active job executions and support graceful shutdown.
 func (p *Pool) ProcessWaiting(job domain.Job, sem chan struct{}, wg *sync.WaitGroup) {
 	if !job.LockJob() {
 		// someone is already working with this job
@@ -28,6 +38,10 @@ func (p *Pool) ProcessWaiting(job domain.Job, sem chan struct{}, wg *sync.WaitGr
 	defer job.UnlockJob()
 	meta := job.GetMetadata()
 	execErr := job.CanExecute()
+	nextRun := job.GetNextRun()
+	if !(time.Now().After(nextRun) || time.Now().Equal(nextRun)) {
+		return
+	}
 	if errors.Is(execErr, errs.ErrJobExecTooEarly) {
 		return
 	}
@@ -61,19 +75,8 @@ func (p *Pool) ProcessWaiting(job domain.Job, sem chan struct{}, wg *sync.WaitGr
 			return
 		}
 	}
-	nextRun := job.GetNextRun()
 
-	if time.Now().After(nextRun) || time.Now().Equal(nextRun) {
-		// Mark the job as started, update metrics.
-		job.ProcessStart()
-
-		p.Execute(job, sem, wg)
-	} else {
-		select {
-		case <-sem:
-		default:
-		}
-	}
+	p.Execute(job, sem, wg)
 }
 
 // ProcessRunning monitors a job currently in the "Running" state,
@@ -102,7 +105,7 @@ func (p *Pool) ProcessRunning(job domain.Job) {
 func (p *Pool) ProcessCompleted(job domain.Job) {
 	nextRun := job.GetNextRun()
 
-	if nextRun.After(time.Now()) || time.Now().Equal(nextRun) {
+	if nextRun.After(time.Now()) {
 		job.UpdateState(domain.StateDTO{
 			Status: domain.Waiting,
 		})

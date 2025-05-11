@@ -104,7 +104,7 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (doma
 		}
 		job.cron = cron
 	}
-	startTime := job.StartAt
+
 	if job.StartAt.IsZero() {
 		job.StartAt = time.Now()
 	}
@@ -115,8 +115,13 @@ func New(jobDTO domain.JobDTO, ctx context.Context, mon domain.Monitoring) (doma
 	}
 
 	job.mon = mon
-	job.state = NewState(job.ID, job.mon)
-	job.state.NextRun = job.SetNextRun(startTime)
+	job.state = NewState(job.ID, job.cron, job.mon)
+	if job.cron != nil {
+		job.state.NextRun = job.cron.NextRun(job.StartAt)
+	} else {
+		job.state.NextRun = job.StartAt
+	}
+
 	job.ctx, job.cancel = context.WithCancel(ctx)
 
 	job.pauseCh = make(chan struct{}, 1)
@@ -219,57 +224,74 @@ func (j *Job) UnlockJob() {
 	}
 }
 
-// handleError stores the given error in the appropriate part of the job state,
-// depending on whether it originates from a hook or general execution failure.
-func (j *Job) handleError(err error) {
-	if err == nil {
-		return
-	}
+// handleError updates the job's state with the provided error,
+// categorizing it based on the context in which the error occurred.
+//
+// This method distinguishes between lifecycle hook errors and execution errors
+// by matching the provided `errType` against known error categories (e.g., OnStart, OnError).
+// Hook-specific errors are saved to their corresponding fields in StateError.HookError,
+// while general execution errors (e.g., from Fn or panic recovery) are stored in StateError.JobError.
+//
+// If `err` is nil, the function exits without modifying state.
+//
+// Parameters:
+//   - err:      The actual error instance to record.
+//   - errType:  A symbolic error indicating the context or hook where the error occurred.
+//
+// Behavior:
+//   - If the error originated from a known lifecycle hook, it is saved under HookError.{HookName}.
+//   - If the error did not match any known hook type and is non-nil, it is stored as a JobError.
+//   - If the error is nil, the method returns immediately and no update is performed.
+
+func (j *Job) handleError(err error, errType error) {
 
 	switch {
-	case errors.Is(err, errs.ErrOnStartHook):
+	case errors.Is(errType, errs.ErrOnStartHook):
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				HookError: domain.HookError{OnStart: err},
 			},
 		})
-	case errors.Is(err, errs.ErrOnStopHook):
+	case errors.Is(errType, errs.ErrOnStopHook):
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				HookError: domain.HookError{OnStop: err},
 			},
 		})
-	case errors.Is(err, errs.ErrOnErrorHook):
+	case errors.Is(errType, errs.ErrOnErrorHook):
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				HookError: domain.HookError{OnError: err},
 			},
 		})
-	case errors.Is(err, errs.ErrOnSuccessHook):
+	case errors.Is(errType, errs.ErrOnSuccessHook):
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				HookError: domain.HookError{OnSuccess: err},
 			},
 		})
-	case errors.Is(err, errs.ErrOnResumeHook):
+	case errors.Is(errType, errs.ErrOnResumeHook):
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				HookError: domain.HookError{OnResume: err},
 			},
 		})
-	case errors.Is(err, errs.ErrOnPauseHook):
+	case errors.Is(errType, errs.ErrOnPauseHook):
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				HookError: domain.HookError{OnPause: err},
 			},
 		})
-	case errors.Is(err, errs.ErrFinallyHook):
+	case errors.Is(errType, errs.ErrFinallyHook):
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				HookError: domain.HookError{Finally: err},
 			},
 		})
 	default:
+		if err == nil {
+			return
+		}
 		j.UpdateState(domain.StateDTO{
 			Error: domain.StateError{
 				JobError: err,

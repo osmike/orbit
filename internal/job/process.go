@@ -21,7 +21,6 @@ func (j *Job) ProcessStart() {
 		Status:        domain.Running,
 		ExecutionTime: 0,
 		Data:          map[string]interface{}{},
-		NextRun:       j.SetNextRun(startTime),
 	})
 }
 
@@ -41,7 +40,7 @@ func (j *Job) ProcessEnd(status domain.JobStatus, err error) {
 	if status == domain.Ended {
 		j.CloseChannels()
 	}
-	j.state.SetEndState(j.JobDTO.Retry.ResetOnSuccess, status, err)
+	j.state.SetEndState(j.JobDTO.Retry.ResetOnSuccess, status, err, j.Interval.Time)
 }
 
 // ProcessRun monitors job execution time to detect timeouts.
